@@ -1,5 +1,7 @@
 # ai_review.nvim
 
+[中文文档](README.zh-CN.md) | English
+
 A Neovim sidebar for reviewing AI/Codex-generated changes with Git-backed accept/reject operations.
 
 The plugin treats your working tree as an AI review queue:
