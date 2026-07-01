@@ -164,6 +164,9 @@ require("ai_review").setup({
 ### `submodules`
 
 - `enabled`：是否扫描已初始化的 Git submodule。
+
+说明：`submodules.enabled` 只控制初始状态。可以在 sidebar 中按 `S` 或执行 `:AiReviewToggleSubmodules` 在运行时切换 submodule 扫描。
+
 - `recursive`：是否递归扫描 nested submodule。
 - `max_depth`：递归深度限制。`nil` 表示无限递归，`1` 表示只扫描第一层 submodule。
 - `include_untracked`：是否包含未跟踪的普通文件。

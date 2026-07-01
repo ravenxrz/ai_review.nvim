@@ -164,6 +164,9 @@ Controls buffer-local mappings inside the AI Review sidebar. Values can be eithe
 ### `submodules`
 
 - `enabled`: scan initialized Git submodules.
+
+Note: `submodules.enabled` controls the initial state only. You can toggle submodule scanning at runtime with `S` in the sidebar or `:AiReviewToggleSubmodules`.
+
 - `recursive`: scan nested submodules recursively.
 - `max_depth`: recursion limit. `nil` means unlimited, `1` means first-level submodules only.
 - `include_untracked`: include untracked ordinary files.

@@ -14,7 +14,7 @@ local function opts()
   local sc = config.options.scanner or {}
   return {
     submodules = {
-      enabled = (sub.enabled ~= false) and (state.submodules_enabled ~= false),
+      enabled = state.submodules_enabled ~= false,
       recursive = sub.recursive ~= false,
       max_depth = sub.max_depth,
       include_untracked = sub.include_untracked ~= false,
