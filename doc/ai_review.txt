@@ -1,0 +1,27 @@
+*ai_review.nvim* AI/Codex Git hunk review sidebar
+
+===============================================================================
+CONTENTS                                                        *ai_review*
+
+Commands:
+  :AiReviewOpen       Open the sidebar
+  :AiReviewClose      Close the sidebar
+  :AiReviewToggle     Toggle the sidebar
+  :AiReviewRefresh    Refresh the sidebar
+
+Default sidebar mappings:
+  p       show conflict-style preview for current hunk
+  ]g      next hunk and preview
+  [g      previous hunk and preview
+  a/s     accept hunk
+  x/r     reject hunk
+  u       undo accepted/rejected hunk
+  R       refresh and clear processed rows
+  q       close sidebar
+
+Setup:
+>
+  require('ai_review').setup({
+    sidebar = { side = 'left', width = 50 },
+  })
+<
