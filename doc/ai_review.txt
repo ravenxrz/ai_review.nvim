@@ -19,11 +19,51 @@ Default sidebar mappings:
   R       refresh and clear processed rows
   zR      expand all
   zM      collapse all
+  S       toggle submodule scan
   q       close sidebar
 
 Setup:
 >
   require('ai_review').setup({
-    sidebar = { side = 'left', width = 50 },
+    sidebar = { side = 'left', width = 50, winfixbuf = true },
   })
 <
+
+
+===============================================================================
+CONFIGURATION                                           *ai_review-configuration*
+
+Default setup:
+>
+  require('ai_review').setup({
+    sidebar = { side = 'left', width = 50, winfixbuf = true },
+    git = { root_cache = true, max_diff_lines = 20000 },
+    submodules = {
+      enabled = true,
+      recursive = true,
+      max_depth = nil,
+      include_untracked = true,
+      max_untracked_files = 200,
+      max_untracked_file_size = 256 * 1024,
+    },
+    scanner = {
+      async = true,
+      concurrency = 8,
+      render_debounce_ms = 80,
+      git_timeout_ms = 5000,
+    },
+  })
+<
+
+Commands:
+  :AiReviewOpen
+  :AiReviewClose
+  :AiReviewToggle
+  :AiReviewRefresh
+  :AiReviewToggleSubmodules
+  :AiReviewToggleConflictDiff
+  :AiReviewFocus
+  :AiReviewFocusSidebar
+  :AiReviewFocusSource
+
+See README.md or README.zh-CN.md for the full keymap and icon configuration.

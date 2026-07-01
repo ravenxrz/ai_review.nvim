@@ -8,6 +8,7 @@ local M = {
   sidebar_buf = nil,
   source_win = nil,
   line_map = {},
+  submodules_enabled = true,
   scan = {
     id = 0,
     running = false,
@@ -17,6 +18,15 @@ local M = {
     errors = {},
   },
 }
+
+function M.set_submodules_enabled(enabled)
+  M.submodules_enabled = enabled and true or false
+end
+
+function M.toggle_submodules_enabled()
+  M.submodules_enabled = not M.submodules_enabled
+  return M.submodules_enabled
+end
 
 function M.begin_scan(root)
   M.root = root

@@ -61,12 +61,84 @@ local function add_highlight(buf, line, start_col, end_col, group)
   pcall(vim.api.nvim_buf_add_highlight, buf, -1, group, line, start_col, end_col)
 end
 
+function M.ensure_width(force)
+  if is_valid_win(state.sidebar_win) then
+    local target = config.options.sidebar.width
+    local current = vim.api.nvim_win_get_width(state.sidebar_win)
+    local min_width = math.max(10, math.floor(target * 0.6))
+    if force or current < min_width then
+      pcall(vim.api.nvim_win_set_width, state.sidebar_win, target)
+    end
+  end
+end
+
+local function install_resize_autocmd()
+  local group = vim.api.nvim_create_augroup("AiReviewSidebarWidth", { clear = true })
+  vim.api.nvim_create_autocmd({ "WinResized", "VimResized" }, {
+    group = group,
+    callback = function()
+      vim.schedule(function()
+        pcall(M.ensure_width, false)
+      end)
+    end,
+  })
+end
+
+local ignored_source_filetypes = {
+  NvimTree = true,
+  ["neo-tree"] = true,
+  aerial = true,
+  Outline = true,
+  ["ai-review"] = true,
+  ["ai-review-diff"] = true,
+  qf = true,
+  help = true,
+  man = true,
+  lazy = true,
+  mason = true,
+  TelescopePrompt = true,
+  Trouble = true,
+  toggleterm = true,
+}
+
+function M.is_source_win(win)
+  if not is_valid_win(win) then
+    return false
+  end
+  local buf = vim.api.nvim_win_get_buf(win)
+  local bt = vim.bo[buf].buftype
+  local ft = vim.bo[buf].filetype
+  if bt ~= "" then
+    return false
+  end
+  if ignored_source_filetypes[ft] then
+    return false
+  end
+  return true
+end
+
+function M.find_source_win(exclude)
+  if M.is_source_win(state.source_win) and state.source_win ~= exclude then
+    return state.source_win
+  end
+  local current = vim.api.nvim_get_current_win()
+  if M.is_source_win(current) and current ~= exclude then
+    return current
+  end
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if win ~= exclude and M.is_source_win(win) then
+      return win
+    end
+  end
+  return nil
+end
+
 function M.ensure_sidebar()
   if is_valid_win(state.sidebar_win) and is_valid_buf(state.sidebar_buf) then
     return state.sidebar_buf, state.sidebar_win
   end
 
-  state.source_win = vim.api.nvim_get_current_win()
+  state.source_win = M.find_source_win() or vim.api.nvim_get_current_win()
   local side = config.options.sidebar.side
   local width = config.options.sidebar.width
   if side == "right" then
@@ -91,7 +163,15 @@ function M.ensure_sidebar()
   vim.wo[win].cursorline = true
   vim.wo[win].wrap = false
   vim.wo[win].winfixwidth = true
+  if config.options.sidebar.winfixbuf then
+    pcall(function()
+      vim.wo[win].winfixbuf = true
+    end)
+  end
   vim.api.nvim_win_set_width(win, width)
+  if config.options.sidebar.auto_restore_width then
+    install_resize_autocmd()
+  end
 
   return buf, win
 end
@@ -125,6 +205,7 @@ function M.set_keymaps(buf)
   set_key(buf, km.prev_hunk, actions.prev_hunk, "AI Review previous hunk")
   set_key(buf, km.expand_all, actions.expand_all, "AI Review expand all")
   set_key(buf, km.collapse_all, actions.collapse_all, "AI Review collapse all")
+  set_key(buf, km.toggle_submodules, actions.toggle_submodules, "AI Review toggle submodules")
 end
 
 function M.close()
@@ -149,6 +230,9 @@ local function render_header(lines, line_map)
   table.insert(line_map, { kind = "header" })
   table.insert(lines, string.format("%s %d pending   %s %d accepted   %s %d rejected", config.options.icons.pending, pending, config.options.icons.accepted, accepted, config.options.icons.rejected, rejected))
   table.insert(line_map, { kind = "header" })
+  local submodule_state = state.submodules_enabled and "on" or "off"
+  table.insert(lines, string.format("submodules: %s  (S to toggle)", submodule_state))
+  table.insert(line_map, { kind = "submodule_stats" })
   table.insert(lines, "────────────────────────────────────────")
   table.insert(line_map, { kind = "header" })
   table.insert(lines, string.format("Filter: %s", state.filter))
@@ -194,6 +278,9 @@ end
 function M.render()
   highlights.setup()
   local buf = M.ensure_sidebar()
+  if config.options.sidebar.auto_restore_width then
+    M.ensure_width(false)
+  end
   state.line_map = {}
   local lines = {}
   render_header(lines, state.line_map)
@@ -237,6 +324,8 @@ function M.render()
       add_highlight(buf, idx, 0, -1, "AiReviewRoot")
     elseif line:match("^─") then
       add_highlight(buf, idx, 0, -1, "AiReviewSeparator")
+    elseif state.line_map[i] and state.line_map[i].kind == "submodule_stats" then
+      add_highlight(buf, idx, 0, -1, "AiReviewSubmoduleStats")
     elseif line:match("pending") or line:match("Filter:") then
       add_highlight(buf, idx, 0, -1, "AiReviewStats")
     elseif state.line_map[i] and (state.line_map[i].kind == "group" or state.line_map[i].kind == "dir") then
@@ -263,8 +352,30 @@ end
 
 function M.focus()
   if is_valid_win(state.sidebar_win) then
+    if config.options.sidebar.auto_restore_width then
+      M.ensure_width(false)
+    end
     vim.api.nvim_set_current_win(state.sidebar_win)
   end
+end
+
+
+function M.focus_source()
+  local win = M.find_source_win(state.sidebar_win)
+  if win and vim.api.nvim_win_is_valid(win) then
+    state.source_win = win
+    vim.api.nvim_set_current_win(win)
+    return true
+  end
+  return false
+end
+
+function M.toggle_focus()
+  local current = vim.api.nvim_get_current_win()
+  if current == state.sidebar_win then
+    return M.focus_source()
+  end
+  return M.focus()
 end
 
 return M

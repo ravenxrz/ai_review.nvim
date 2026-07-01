@@ -36,15 +36,12 @@ local function open_file_at(hunk)
     return false
   end
   local sidebar_win = state.sidebar_win
-  local target_win = state.source_win
-  if not (target_win and vim.api.nvim_win_is_valid(target_win)) or target_win == sidebar_win then
-    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-      if win ~= sidebar_win then
-        target_win = win
-        break
-      end
-    end
+  local target_win = ui.find_source_win(sidebar_win)
+  if not target_win then
+    vim.cmd("botright new")
+    target_win = vim.api.nvim_get_current_win()
   end
+  state.source_win = target_win
   if target_win and vim.api.nvim_win_is_valid(target_win) then
     vim.api.nvim_set_current_win(target_win)
   end
@@ -280,6 +277,12 @@ function M.toggle_filter()
   ui.render()
 end
 
+function M.toggle_submodules()
+  local enabled = state.toggle_submodules_enabled()
+  notify("Submodule scanning " .. (enabled and "enabled" or "disabled"))
+  require("ai_review").refresh()
+end
+
 function M.help()
   local lines = {
     "AI Review keys",
@@ -296,6 +299,7 @@ function M.help()
     "R       refresh and clear processed hunks",
     "zR      expand all",
     "zM      collapse all",
+    "S       toggle submodule scan",
     "q       close sidebar",
   }
   local buf = vim.api.nvim_create_buf(false, true)

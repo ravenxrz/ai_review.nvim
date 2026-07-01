@@ -14,7 +14,7 @@ local function opts()
   local sc = config.options.scanner or {}
   return {
     submodules = {
-      enabled = sub.enabled ~= false,
+      enabled = (sub.enabled ~= false) and (state.submodules_enabled ~= false),
       recursive = sub.recursive ~= false,
       max_depth = sub.max_depth,
       include_untracked = sub.include_untracked ~= false,
@@ -22,6 +22,7 @@ local function opts()
     scanner = {
       concurrency = sc.concurrency or 8,
       render_debounce_ms = sc.render_debounce_ms or 80,
+      git_timeout_ms = sc.git_timeout_ms or 5000,
     },
   }
 end
@@ -50,7 +51,11 @@ local function collect_untracked(node, out, include_untracked)
   if not include_untracked then
     return
   end
-  for _, file in ipairs(git.untracked_files(node.root)) do
+  local sub_opts = config.options.submodules or {}
+  for _, file in ipairs(git.untracked_files(node.root, {
+    max_files = sub_opts.max_untracked_files,
+    max_file_size = sub_opts.max_untracked_file_size,
+  })) do
     local lines = git.read_file_lines(node.root, file)
     table.insert(out, parser.untracked_file(file, lines, "pending", {
       repo_root = node.root,
@@ -121,8 +126,8 @@ local run_next
 
 local function finish_job(scan_id)
   active = active - 1
-  state.scan.pending_jobs = math.max(0, state.scan.pending_jobs - 1)
   state.scan.finished_jobs = state.scan.finished_jobs + 1
+  state.scan.pending_jobs = math.max(0, state.scan.total_jobs - state.scan.finished_jobs)
   run_next(scan_id)
   maybe_done(scan_id)
 end
@@ -132,42 +137,34 @@ local function scan_job(job)
   local node = job.node
   local o = opts()
 
-  git.run_async(node.root, { "config", "--file", ".gitmodules", "--get-regexp", "path" }, function(_, sm_lines)
+  vim.schedule(function()
     if scan_id ~= state.scan.id then finish_job(scan_id) return end
-    local submodules = {}
-    for _, line in ipairs(sm_lines or {}) do
-      local path = line:match("%S+%.path%s+(.+)$")
-      if path and path ~= "" then
-        table.insert(submodules, { path = path, root = node.root .. "/" .. path })
+
+    local submodules = git.submodules(node.root)
+    local diff_code, diff_lines = git.diff(node.root)
+    if diff_code ~= 0 then
+      state.add_scan_error(scan_id, table.concat(diff_lines or {}, "\n"))
+    else
+      local files = parse_repo_result(node, diff_lines or {}, submodules, o.submodules.include_untracked)
+      state.merge_files(files)
+      schedule_render()
+    end
+
+    if should_descend(node, o.submodules) then
+      for _, sm in ipairs(submodules) do
+        local child_root = node.root .. "/" .. sm.path
+        if git.is_git_repo(child_root) then
+          local display = node.submodule and (node.submodule .. "/" .. sm.path) or sm.path
+          enqueue(scan_id, {
+            root = child_root,
+            depth = node.depth + 1,
+            submodule = display,
+          }, job.visited)
+        end
       end
     end
 
-    git.run_async(node.root, { "diff", "--unified=0", "--no-ext-diff", "--no-color" }, function(code, diff_lines)
-      if scan_id ~= state.scan.id then finish_job(scan_id) return end
-      if code ~= 0 then
-        state.add_scan_error(scan_id, table.concat(diff_lines or {}, "\n"))
-      else
-        local files = parse_repo_result(node, diff_lines or {}, submodules, o.submodules.include_untracked)
-        state.merge_files(files)
-        schedule_render()
-      end
-
-      if should_descend(node, o.submodules) then
-        for _, sm in ipairs(submodules) do
-          local child_root = node.root .. "/" .. sm.path
-          if git.is_git_repo(child_root) then
-            local display = node.submodule and (node.submodule .. "/" .. sm.path) or sm.path
-            enqueue(scan_id, {
-              root = child_root,
-              depth = node.depth + 1,
-              submodule = display,
-            }, job.visited)
-          end
-        end
-      end
-
-      finish_job(scan_id)
-    end)
+    finish_job(scan_id)
   end)
 end
 

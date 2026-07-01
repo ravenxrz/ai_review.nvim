@@ -74,7 +74,7 @@ local function build_virtual_lines(hunk)
   for _, line in ipairs(original) do
     table.insert(lines, virt_line(line, "AiReviewDiffOriginal"))
   end
-  table.insert(lines, virt_line("======= AI / CURRENT", "AiReviewDiffCurrentLabel"))
+  table.insert(lines, virt_line("======= CURRENT", "AiReviewDiffCurrentLabel"))
   for _, line in ipairs(current) do
     table.insert(lines, virt_line(line, "AiReviewDiffCurrent"))
   end

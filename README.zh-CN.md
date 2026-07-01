@@ -20,7 +20,7 @@
 - 在 refresh 前，可以 undo accepted/rejected hunk。
 - 源码 buffer 内 conflict-style 预览：
   - `<<<<<<< ORIGINAL`
-  - `======= AI / CURRENT`
+  - `======= CURRENT`
   - `>>>>>>> END`
 - `[g` / `]g` hunk 导航，并自动打开/更新源码内预览。
 - 手动 `R` refresh 会清理已处理 hunk，让 sidebar 只关注剩余未处理改动。
@@ -76,12 +76,118 @@
 }
 ```
 
+
+## 配置项
+
+完整默认配置：
+
+```lua
+require("ai_review").setup({
+  sidebar = {
+    side = "left", -- "left" 或 "right"
+    width = 50,
+    winfixbuf = true,
+    auto_restore_width = false,
+  },
+  icons = {
+    title = "󰚩",
+    git = "",
+    file = "󰈙",
+    pending = "●",
+    accepted = "✓",
+    rejected = "✗",
+    expanded = "▾",
+    collapsed = "▸",
+    added = "+",
+    deleted = "-",
+  },
+  keymaps = {
+    jump = { "<CR>", "o" },
+    preview = "p",
+    accept = { "a", "s" },
+    reject = { "x", "r" },
+    unstage = "u",
+    accept_file = "A",
+    reject_file = "X",
+    unstage_file = "U",
+    refresh = "R",
+    filter = "F",
+    help = "?",
+    close = "q",
+    next_hunk = "]g",
+    prev_hunk = "[g",
+    expand_all = "zR",
+    collapse_all = "zM",
+    toggle_submodules = "S",
+  },
+  git = {
+    root_cache = true,
+    max_diff_lines = 20000,
+  },
+  submodules = {
+    enabled = true,
+    recursive = true,
+    max_depth = nil, -- nil 表示无限递归
+    include_untracked = true,
+    max_untracked_files = 200,
+    max_untracked_file_size = 256 * 1024,
+  },
+  scanner = {
+    async = true,
+    concurrency = 8,
+    render_debounce_ms = 80,
+    git_timeout_ms = 5000,
+  },
+})
+```
+
+### `sidebar`
+
+控制 sidebar 的位置、宽度，以及可选的 `winfixbuf` 隔离。
+
+说明：AI Review 会在 `WinResized` / `VimResized` 后恢复配置的 sidebar 宽度，便于和 NvimTree 等其他侧边栏共存。
+
+
+### `icons`
+
+控制 sidebar 中使用的符号。如果终端字体不支持图标，可以替换成纯 ASCII 字符。
+
+### `keymaps`
+
+控制 AI Review sidebar 内的 buffer-local 快捷键。配置值可以是字符串，也可以是字符串列表。
+
+### `git`
+
+- `root_cache`：在当前 Neovim session 中缓存 Git root 查找结果。
+- `max_diff_lines`：限制超大 diff 输出，避免 UI 卡顿。
+
+### `submodules`
+
+- `enabled`：是否扫描已初始化的 Git submodule。
+- `recursive`：是否递归扫描 nested submodule。
+- `max_depth`：递归深度限制。`nil` 表示无限递归，`1` 表示只扫描第一层 submodule。
+- `include_untracked`：是否包含未跟踪的普通文件。
+- `max_untracked_files`：每个 repo 最多读取多少个 untracked 文件。
+- `max_untracked_file_size`：跳过大于该字节数的 untracked 文件。
+
+### `scanner`
+
+- `async`：启用异步 repo/submodule 扫描。
+- `concurrency`：最多同时扫描多少个 repo。
+- `render_debounce_ms`：扫描结果流式返回时，sidebar 重绘的 debounce 时间。
+- `git_timeout_ms`：异步扫描中 Git 命令的超时时间。
+
 ## 命令
 
 - `:AiReviewOpen`：打开 sidebar
 - `:AiReviewClose`：关闭 sidebar
 - `:AiReviewToggle`：切换 sidebar
 - `:AiReviewRefresh`：刷新 sidebar
+- `:AiReviewToggleSubmodules`：开关 submodule 扫描并刷新 sidebar
+- `:AiReviewToggleConflictDiff`：在当前 buffer hunk 上切换 conflict-style diff
+- `:AiReviewFocus`：在 sidebar/source 窗口之间切换焦点
+- `:AiReviewFocusSidebar`：聚焦 AI Review sidebar
+- `:AiReviewFocusSource`：聚焦源码窗口
 
 ## Sidebar 快捷键
 
@@ -101,6 +207,7 @@
 | `R` | refresh，并清理已处理 hunk |
 | `zR` | 展开全部 |
 | `zM` | 收起全部 |
+| `S` | 开关 submodule 扫描 |
 | `?` | 帮助 |
 | `q` | 关闭 sidebar |
 

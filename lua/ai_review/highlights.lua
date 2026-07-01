@@ -6,6 +6,7 @@ local links = {
   AiReviewSeparator = "Comment",
   AiReviewFile = "Directory",
   AiReviewStats = "Comment",
+  AiReviewSubmoduleStats = "Comment",
   AiReviewHelp = "Comment",
   AiReviewPending = "DiagnosticWarn",
   AiReviewAccepted = "DiffAdd",
@@ -38,6 +39,7 @@ function M.setup()
   for group, target in pairs(links) do
     set_link(group, target)
   end
+  vim.api.nvim_set_hl(0, "AiReviewSubmoduleStats", { link = "Comment", italic = true, default = true })
   set_soft_diff_highlights()
 end
 

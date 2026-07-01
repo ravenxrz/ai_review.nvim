@@ -4,6 +4,13 @@ M.defaults = {
   sidebar = {
     side = "left",
     width = 50,
+    winfixbuf = true,
+    auto_restore_width = false,
+    preserve_widths = {
+      NvimTree = 40,
+      ["neo-tree"] = 40,
+      Outline = 25,
+    },
   },
   icons = {
     title = "󰚩",
@@ -34,6 +41,7 @@ M.defaults = {
     prev_hunk = "[g",
     expand_all = "zR",
     collapse_all = "zM",
+    toggle_submodules = "S",
   },
   git = {
     root_cache = true,
@@ -44,11 +52,14 @@ M.defaults = {
     recursive = true,
     max_depth = nil,
     include_untracked = true,
+    max_untracked_files = 200,
+    max_untracked_file_size = 256 * 1024,
   },
   scanner = {
     async = true,
     concurrency = 8,
     render_debounce_ms = 80,
+    git_timeout_ms = 5000,
   },
 }
 

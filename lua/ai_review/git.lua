@@ -49,11 +49,35 @@ function M.run(root, args)
   return code, out
 end
 
-function M.run_async(root, args, cb)
+function M.run_async(root, args, cb, opts)
+  opts = opts or {}
+  local timeout_ms = opts.timeout_ms or ((config.options.scanner or {}).git_timeout_ms) or 5000
   local cmd = { "git", "-C", root }
   vim.list_extend(cmd, args)
+
+  local done = false
+  local timer = timeout_ms and vim.loop.new_timer() or nil
+  local function finish(code, lines)
+    if done then return end
+    done = true
+    if timer then
+      timer:stop()
+      timer:close()
+    end
+    cb(code, lines or {})
+  end
+
   if vim.system then
-    vim.system(cmd, { text = true }, function(obj)
+    local handle
+    if timer then
+      timer:start(timeout_ms, 0, function()
+        if handle then pcall(function() handle:kill(15) end) end
+        vim.schedule(function()
+          finish(124, { "git command timed out after " .. tostring(timeout_ms) .. "ms: " .. table.concat(cmd, " ") })
+        end)
+      end)
+    end
+    handle = vim.system(cmd, { text = true }, function(obj)
       vim.schedule(function()
         local stdout = obj.stdout or ""
         local stderr = obj.stderr or ""
@@ -63,12 +87,21 @@ function M.run_async(root, args, cb)
             table.insert(lines, line)
           end
         end
-        cb(obj.code or 0, lines)
+        finish(obj.code or 0, lines)
       end)
     end)
   else
     local output = {}
-    vim.fn.jobstart(cmd, {
+    local job
+    if timer then
+      timer:start(timeout_ms, 0, function()
+        if job then pcall(vim.fn.jobstop, job) end
+        vim.schedule(function()
+          finish(124, { "git command timed out after " .. tostring(timeout_ms) .. "ms: " .. table.concat(cmd, " ") })
+        end)
+      end)
+    end
+    job = vim.fn.jobstart(cmd, {
       stdout_buffered = true,
       stderr_buffered = true,
       on_stdout = function(_, data)
@@ -82,7 +115,7 @@ function M.run_async(root, args, cb)
         end
       end,
       on_exit = function(_, code)
-        vim.schedule(function() cb(code, output) end)
+        vim.schedule(function() finish(code, output) end)
       end,
     })
   end
@@ -216,18 +249,27 @@ function M.submodules(root)
   return result
 end
 
-function M.untracked_files(root)
+function M.untracked_files(root, opts)
+  opts = opts or {}
   local code, out = M.status(root)
   if code ~= 0 then
     return {}
   end
   local result = {}
+  local max_files = opts.max_files or 200
+  local max_size = opts.max_file_size or (256 * 1024)
   for _, line in ipairs(out) do
     local path = line:match("^%?%?%s+(.+)$")
     if path and path ~= "" then
       local full = root .. "/" .. path
       if vim.fn.filereadable(full) == 1 then
-        table.insert(result, path)
+        local stat = vim.loop.fs_stat(full)
+        if stat and stat.type == "file" and stat.size <= max_size then
+          table.insert(result, path)
+          if #result >= max_files then
+            break
+          end
+        end
       end
     end
   end
