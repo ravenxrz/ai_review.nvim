@@ -99,6 +99,8 @@ For local development:
 | `U` | Unstage current file |
 | `F` | Cycle filter |
 | `R` | Refresh; clears processed rows |
+| `zR` | Expand all |
+| `zM` | Collapse all |
 | `?` | Help |
 | `q` | Close sidebar |
 

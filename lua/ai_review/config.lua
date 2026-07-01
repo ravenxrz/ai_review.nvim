@@ -39,6 +39,17 @@ M.defaults = {
     root_cache = true,
     max_diff_lines = 20000,
   },
+  submodules = {
+    enabled = true,
+    recursive = true,
+    max_depth = nil,
+    include_untracked = true,
+  },
+  scanner = {
+    async = true,
+    concurrency = 8,
+    render_debounce_ms = 80,
+  },
 }
 
 M.options = vim.deepcopy(M.defaults)

@@ -99,6 +99,8 @@
 | `U` | unstage 当前文件 |
 | `F` | 切换 filter |
 | `R` | refresh，并清理已处理 hunk |
+| `zR` | 展开全部 |
+| `zM` | 收起全部 |
 | `?` | 帮助 |
 | `q` | 关闭 sidebar |
 

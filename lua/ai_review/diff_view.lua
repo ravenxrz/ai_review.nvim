@@ -1,5 +1,7 @@
 local state = require("ai_review.state")
 local highlights = require("ai_review.highlights")
+local git = require("ai_review.git")
+local parser = require("ai_review.parser")
 
 local M = {
   ns = nil,
@@ -62,7 +64,7 @@ local function build_virtual_lines(hunk)
   local lines = {}
 
   table.insert(lines, virt_line(
-    string.format("AI Review Diff Preview: %s  H%s  line %s  [%s]", hunk.file or "", tostring(hunk.index or "?"), tostring(hunk.new_start or "?"), hunk.status or "pending"),
+    string.format("AI Review Diff Preview: %s  H%s  line %s  [%s]", (hunk.submodule and (hunk.submodule .. "/" .. hunk.file) or (hunk.display_file or hunk.file or "")), tostring(hunk.index or "?"), tostring(hunk.new_start or "?"), hunk.status or "pending"),
     "AiReviewDiffHeader"
   ))
   if header ~= "" then
@@ -85,7 +87,7 @@ local function target_buffer_for_hunk(hunk)
   if not hunk or not state.root then
     return nil
   end
-  local full = state.root .. "/" .. hunk.file
+  local full = (hunk.repo_root or state.root) .. "/" .. hunk.file
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_get_name(buf) == full then
       return buf
@@ -104,7 +106,8 @@ function M.close()
   M.hunk = nil
 end
 
-function M.show(hunk)
+function M.show(hunk, opts)
+  opts = opts or {}
   if not hunk then
     return
   end
@@ -131,9 +134,64 @@ function M.show(hunk)
   M.buf = buf
   M.hunk = hunk
 
-  if state.sidebar_win and vim.api.nvim_win_is_valid(state.sidebar_win) then
+  if opts.focus_sidebar ~= false and state.sidebar_win and vim.api.nvim_win_is_valid(state.sidebar_win) then
     vim.api.nvim_set_current_win(state.sidebar_win)
   end
+end
+
+
+local function current_buffer_hunk()
+  local buf = vim.api.nvim_get_current_buf()
+  local file = vim.api.nvim_buf_get_name(buf)
+  if file == "" then
+    return nil, "current buffer has no file"
+  end
+  local root, err = git.find_root(file)
+  if not root then
+    return nil, err or "not inside git repository"
+  end
+  local rel = vim.fn.fnamemodify(file, ":p"):sub(#root + 2)
+  local code, diff_lines = git.diff(root)
+  if code ~= 0 then
+    return nil, table.concat(diff_lines, "\n")
+  end
+  local files = parser.parse(diff_lines, "pending", { repo_root = root })
+  local cursor = vim.api.nvim_win_get_cursor(0)[1]
+  for _, f in ipairs(files) do
+    if f.path == rel then
+      for _, h in ipairs(f.pending or {}) do
+        local start_line = math.max(h.new_start or 1, 1)
+        local count = math.max(h.new_count or 1, 1)
+        local end_line = start_line + count - 1
+        if cursor >= start_line and cursor <= end_line then
+          return h
+        end
+      end
+      -- If cursor is just above/below a zero-context hunk, choose nearest hunk in file.
+      local nearest, best = nil, nil
+      for _, h in ipairs(f.pending or {}) do
+        local dist = math.abs(cursor - math.max(h.new_start or 1, 1))
+        if not best or dist < best then
+          nearest, best = h, dist
+        end
+      end
+      return nearest
+    end
+  end
+  return nil, "no pending hunk found for current cursor"
+end
+
+function M.toggle_current_hunk()
+  local hunk, err = current_buffer_hunk()
+  if not hunk then
+    vim.notify(err or "No current hunk", vim.log.levels.WARN, { title = "AI Review" })
+    return
+  end
+  if M.is_open() and M.buf == vim.api.nvim_get_current_buf() and M.hunk and M.hunk.id == hunk.id then
+    M.close()
+    return
+  end
+  M.show(hunk, { focus_sidebar = false })
 end
 
 function M.refresh_if_open(hunk)

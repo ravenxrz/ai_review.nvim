@@ -30,7 +30,7 @@ local function open_file_at(hunk)
   if not hunk or not state.root then
     return false
   end
-  local full = state.root .. "/" .. hunk.file
+  local full = (hunk.repo_root or state.root) .. "/" .. hunk.file
   if vim.fn.filereadable(full) == 0 then
     notify("File is not readable: " .. hunk.file, vim.log.levels.WARN)
     return false
@@ -83,8 +83,10 @@ end
 function M.jump_or_toggle()
   local ref = current_ref()
   if not ref then return end
-  if ref.kind == "file" then
-    state.expanded[ref.file] = not state.expanded[ref.file]
+  if ref.kind == "file" or ref.kind == "dir" or ref.kind == "group" then
+    if ref.key then
+      state.expanded[ref.key] = not (state.expanded[ref.key] ~= false)
+    end
     ui.render()
   elseif ref.kind == "hunk" then
     open_file_at(ref.hunk)
@@ -122,7 +124,12 @@ function M.accept_hunk()
     return
   end
 
-  local code, out = git.apply_hunk_to_index(state.root, ref.hunk)
+  local code, out
+  if ref.hunk.kind == "untracked" then
+    code, out = git.add_file(ref.hunk.repo_root or state.root, ref.hunk.file)
+  else
+    code, out = git.apply_hunk_to_index(ref.hunk.repo_root or state.root, ref.hunk)
+  end
   if code ~= 0 then
     notify("Failed to accept hunk:\n" .. table.concat(out, "\n"), vim.log.levels.ERROR)
     return
@@ -146,7 +153,7 @@ function M.reject_hunk()
   end
 
   local rejected = vim.deepcopy(ref.hunk)
-  local code, out = git.apply_reverse_hunk(state.root, rejected)
+  local code, out = git.apply_reverse_hunk(rejected.repo_root or state.root, rejected)
   if code ~= 0 then
     notify("Failed to reject hunk:\n" .. table.concat(out, "\n"), vim.log.levels.ERROR)
     return
@@ -159,19 +166,29 @@ function M.reject_hunk()
   ui.focus()
 end
 
-local function ref_file(ref)
+local function ref_file_info(ref)
   if not ref then return nil end
-  if ref.kind == "file" then return ref.file end
-  if ref.kind == "hunk" then return ref.file end
+  if ref.kind == "file" then
+    local file = ref.file_obj or { path = ref.file }
+    return file.path, file.repo_root or state.root, file
+  end
+  if ref.kind == "hunk" then
+    return ref.hunk.file, ref.hunk.repo_root or state.root, ref.hunk
+  end
+end
+
+local function ref_file(ref)
+  local file = ref_file_info(ref)
+  return file
 end
 
 function M.accept_file()
-  local file = ref_file(current_ref())
+  local file, root = ref_file_info(current_ref())
   if not file then
     notify("Move cursor to a file or hunk", vim.log.levels.WARN)
     return
   end
-  local code, out = git.add_file(state.root, file)
+  local code, out = git.add_file(root, file)
   if code ~= 0 then
     notify(table.concat(out, "\n"), vim.log.levels.ERROR)
     return
@@ -187,7 +204,8 @@ function M.reject_file()
   end
   local ok = vim.fn.confirm("Reject all unstaged changes in " .. file .. "?", "&Yes\n&No", 2)
   if ok ~= 1 then return end
-  local code, out = git.restore_file(state.root, file)
+  local root = (current_ref() and current_ref().hunk and current_ref().hunk.repo_root) or state.root
+  local code, out = git.restore_file(root, file)
   if code ~= 0 then
     notify(table.concat(out, "\n"), vim.log.levels.ERROR)
     return
@@ -196,12 +214,12 @@ function M.reject_file()
 end
 
 function M.unstage_file()
-  local file = ref_file(current_ref())
+  local file, root = ref_file_info(current_ref())
   if not file then
     notify("Move cursor to a file or hunk", vim.log.levels.WARN)
     return
   end
-  local code, out = git.unstage_file(state.root, file)
+  local code, out = git.unstage_file(root, file)
   if code ~= 0 then
     notify(table.concat(out, "\n"), vim.log.levels.ERROR)
     return
@@ -210,7 +228,7 @@ function M.unstage_file()
 end
 
 function M.undo_reject_hunk(hunk)
-  local code, out = git.apply_hunk(state.root, hunk)
+  local code, out = git.apply_hunk(hunk.repo_root or state.root, hunk)
   if code ~= 0 then
     notify("Failed to undo rejected hunk:\n" .. table.concat(out, "\n"), vim.log.levels.ERROR)
     return
@@ -229,7 +247,12 @@ function M.unstage_current()
     return
   end
   if ref.kind == "hunk" and ref.hunk.status == "accepted" then
-    local code, out = git.unapply_hunk_from_index(state.root, ref.hunk)
+    local code, out
+    if ref.hunk.kind == "untracked" then
+      code, out = git.unstage_file(ref.hunk.repo_root or state.root, ref.hunk.file)
+    else
+      code, out = git.unapply_hunk_from_index(ref.hunk.repo_root or state.root, ref.hunk)
+    end
     if code ~= 0 then
       notify("Failed to undo accepted hunk:\n" .. table.concat(out, "\n"), vim.log.levels.ERROR)
       return
@@ -271,6 +294,8 @@ function M.help()
     "U       unstage file",
     "F       filter pending view",
     "R       refresh and clear processed hunks",
+    "zR      expand all",
+    "zM      collapse all",
     "q       close sidebar",
   }
   local buf = vim.api.nvim_create_buf(false, true)
@@ -319,18 +344,29 @@ end
 function M.next_hunk() move_to_hunk(1) end
 function M.prev_hunk() move_to_hunk(-1) end
 
-function M.expand_all()
-  for _, file in ipairs(state.files or {}) do
-    state.expanded[file.path] = true
+local function set_all_tree_expanded(value)
+  local tree = require("ai_review.tree")
+  local root = tree.build(state.files or {})
+
+  local function visit(node)
+    if node.key and node.kind ~= "hunk" then
+      state.expanded[node.key] = value
+    end
+    for _, child in ipairs(node.children or {}) do
+      visit(child)
+    end
   end
+
+  visit(root)
   ui.render()
 end
 
+function M.expand_all()
+  set_all_tree_expanded(true)
+end
+
 function M.collapse_all()
-  for _, file in ipairs(state.files or {}) do
-    state.expanded[file.path] = false
-  end
-  ui.render()
+  set_all_tree_expanded(false)
 end
 
 return M

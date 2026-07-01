@@ -49,6 +49,45 @@ function M.run(root, args)
   return code, out
 end
 
+function M.run_async(root, args, cb)
+  local cmd = { "git", "-C", root }
+  vim.list_extend(cmd, args)
+  if vim.system then
+    vim.system(cmd, { text = true }, function(obj)
+      vim.schedule(function()
+        local stdout = obj.stdout or ""
+        local stderr = obj.stderr or ""
+        local lines = stdout ~= "" and vim.split(stdout, "\n", { plain = true, trimempty = true }) or {}
+        if obj.code ~= 0 and stderr ~= "" then
+          for _, line in ipairs(vim.split(stderr, "\n", { plain = true, trimempty = true })) do
+            table.insert(lines, line)
+          end
+        end
+        cb(obj.code or 0, lines)
+      end)
+    end)
+  else
+    local output = {}
+    vim.fn.jobstart(cmd, {
+      stdout_buffered = true,
+      stderr_buffered = true,
+      on_stdout = function(_, data)
+        for _, line in ipairs(data or {}) do
+          if line ~= "" then table.insert(output, line) end
+        end
+      end,
+      on_stderr = function(_, data)
+        for _, line in ipairs(data or {}) do
+          if line ~= "" then table.insert(output, line) end
+        end
+      end,
+      on_exit = function(_, code)
+        vim.schedule(function() cb(code, output) end)
+      end,
+    })
+  end
+end
+
 local function limited(out)
   local max_lines = config.options.git.max_diff_lines
   if max_lines and #out > max_lines then
@@ -148,6 +187,60 @@ end
 function M.delete_untracked(root, file)
   local full = root .. "/" .. file
   return vim.fn.delete(full)
+end
+
+function M.is_git_repo(root)
+  local code, out = M.run(root, { "rev-parse", "--show-toplevel" })
+  if code ~= 0 or not out[1] then
+    return false
+  end
+  return M.realpath(out[1]) == M.realpath(root)
+end
+
+function M.realpath(path)
+  return vim.loop.fs_realpath(path) or vim.fn.fnamemodify(path, ":p"):gsub("/+$", "")
+end
+
+function M.submodules(root)
+  local code, out = M.run(root, { "config", "--file", ".gitmodules", "--get-regexp", "path" })
+  if code ~= 0 then
+    return {}
+  end
+  local result = {}
+  for _, line in ipairs(out) do
+    local path = line:match("%S+%.path%s+(.+)$")
+    if path and path ~= "" then
+      table.insert(result, { path = path, root = root .. "/" .. path })
+    end
+  end
+  return result
+end
+
+function M.untracked_files(root)
+  local code, out = M.status(root)
+  if code ~= 0 then
+    return {}
+  end
+  local result = {}
+  for _, line in ipairs(out) do
+    local path = line:match("^%?%?%s+(.+)$")
+    if path and path ~= "" then
+      local full = root .. "/" .. path
+      if vim.fn.filereadable(full) == 1 then
+        table.insert(result, path)
+      end
+    end
+  end
+  return result
+end
+
+function M.read_file_lines(root, file)
+  local full = root .. "/" .. file
+  local lines = vim.fn.readfile(full)
+  if vim.v.shell_error ~= 0 then
+    return {}
+  end
+  return lines
 end
 
 return M

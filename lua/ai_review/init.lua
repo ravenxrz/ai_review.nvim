@@ -11,33 +11,14 @@ local function notify(msg, level)
   vim.notify(msg, level or vim.log.levels.INFO, { title = "AI Review" })
 end
 
-local function load_files(root)
-  local diff_code, diff_lines = git.diff(root)
-  if diff_code ~= 0 then
-    return nil, table.concat(diff_lines, "\n")
-  end
-  local pending = parser.parse(diff_lines, "pending")
-  -- Refresh intentionally drops accepted/rejected history so the sidebar only
-  -- tracks unresolved changes for the current review pass.
-  state.rejected_log = {}
-  state.filter = "all"
-  return parser.merge_files(pending, {}, {})
-end
-
 function M.refresh()
   local root, err = git.find_root(vim.api.nvim_buf_get_name(0))
   if not root then
     notify("Not inside a Git repository: " .. (err or ""), vim.log.levels.WARN)
     return
   end
-  state.reset_for_root(root)
-  local files, load_err = load_files(root)
-  if not files then
-    notify(load_err, vim.log.levels.ERROR)
-    return
-  end
-  state.files = files
-  ui.render()
+  require("ai_review.diff_view").close()
+  require("ai_review.scanner").scan(root)
 end
 
 function M.open()
@@ -72,6 +53,7 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("AiReviewClose", M.close, {})
   vim.api.nvim_create_user_command("AiReviewToggle", M.toggle, {})
   vim.api.nvim_create_user_command("AiReviewRefresh", M.refresh, {})
+  vim.api.nvim_create_user_command("AiReviewToggleConflictDiff", function() require("ai_review.diff_view").toggle_current_hunk() end, {})
 end
 
 return M

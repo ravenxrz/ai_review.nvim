@@ -17,6 +17,8 @@ Default sidebar mappings:
   x/r     reject hunk
   u       undo accepted/rejected hunk
   R       refresh and clear processed rows
+  zR      expand all
+  zM      collapse all
   q       close sidebar
 
 Setup:

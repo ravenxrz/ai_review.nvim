@@ -1,6 +1,7 @@
 local config = require("ai_review.config")
 local state = require("ai_review.state")
 local highlights = require("ai_review.highlights")
+local tree = require("ai_review.tree")
 
 local M = {}
 
@@ -142,7 +143,9 @@ local function render_header(lines, line_map)
   table.insert(line_map, { kind = "header" })
   table.insert(lines, string.format("%s %s", config.options.icons.git, rel_root(state.root)))
   table.insert(line_map, { kind = "header" })
-  table.insert(lines, string.format("%d files  %d hunks", files, pending + accepted + rejected))
+  local scan = state.scan or {}
+  local scan_text = scan.running and string.format("  scanning %d/%d repos", scan.finished_jobs or 0, scan.total_jobs or 0) or ""
+  table.insert(lines, string.format("%d files  %d hunks%s", files, pending + accepted + rejected, scan_text))
   table.insert(line_map, { kind = "header" })
   table.insert(lines, string.format("%s %d pending   %s %d accepted   %s %d rejected", config.options.icons.pending, pending, config.options.icons.accepted, accepted, config.options.icons.rejected, rejected))
   table.insert(line_map, { kind = "header" })
@@ -152,21 +155,26 @@ local function render_header(lines, line_map)
   table.insert(line_map, { kind = "header" })
 end
 
+local function file_key(file)
+  return (file.repo_root or "") .. "::" .. (file.display_path or file.path)
+end
+
 local function render_file(lines, line_map, file)
-  local expanded = state.expanded[file.path]
+  local key = file_key(file)
+  local expanded = state.expanded[key]
   if expanded == nil then
     expanded = true
-    state.expanded[file.path] = true
+    state.expanded[key] = true
   end
   local arrow = expanded and config.options.icons.expanded or config.options.icons.collapsed
   local counts = string.format("+%d -%d", file.added or 0, file.deleted or 0)
-  local text = string.format("%s %s %s", arrow, file_icon(file.path), file.path)
+  local text = string.format("%s %s %s", arrow, file_icon(file.display_path or file.path), file.display_path or file.path)
   local width = config.options.sidebar.width - #counts - 2
   if #text > width then
     text = "…" .. text:sub(#text - width + 2)
   end
   table.insert(lines, string.format("%-" .. tostring(width) .. "s %s", text, counts))
-  table.insert(line_map, { kind = "file", file = file.path })
+  table.insert(line_map, { kind = "file", file = file.path, file_obj = file })
 
   if expanded then
     for _, hunk in ipairs(visible_hunks(file)) do
@@ -196,12 +204,17 @@ function M.render()
     table.insert(lines, "No Git changes found.")
     table.insert(state.line_map, { kind = "empty" })
   else
-    for _, file in ipairs(state.files) do
-      local has_visible = #visible_hunks(file) > 0
-      if has_visible then
-        table.insert(lines, "")
-        table.insert(state.line_map, { kind = "space" })
-        render_file(lines, state.line_map, file)
+    local root = tree.build(state.files)
+    local tree_lines, tree_map = tree.flatten(root, state.expanded, state.filter)
+    if #tree_lines == 0 then
+      table.insert(lines, "")
+      table.insert(state.line_map, { kind = "empty" })
+      table.insert(lines, "No visible hunks for current filter.")
+      table.insert(state.line_map, { kind = "empty" })
+    else
+      for i, line in ipairs(tree_lines) do
+        table.insert(lines, line)
+        table.insert(state.line_map, tree_map[i])
       end
     end
   end
@@ -226,6 +239,8 @@ function M.render()
       add_highlight(buf, idx, 0, -1, "AiReviewSeparator")
     elseif line:match("pending") or line:match("Filter:") then
       add_highlight(buf, idx, 0, -1, "AiReviewStats")
+    elseif state.line_map[i] and (state.line_map[i].kind == "group" or state.line_map[i].kind == "dir") then
+      add_highlight(buf, idx, 0, -1, "AiReviewRoot")
     elseif state.line_map[i] and state.line_map[i].kind == "file" then
       add_highlight(buf, idx, 0, -1, "AiReviewFile")
     elseif state.line_map[i] and state.line_map[i].kind == "hunk" then

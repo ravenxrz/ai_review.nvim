@@ -8,7 +8,92 @@ local M = {
   sidebar_buf = nil,
   source_win = nil,
   line_map = {},
+  scan = {
+    id = 0,
+    running = false,
+    pending_jobs = 0,
+    finished_jobs = 0,
+    total_jobs = 0,
+    errors = {},
+  },
 }
+
+function M.begin_scan(root)
+  M.root = root
+  M.files = {}
+  M.expanded = {}
+  M.rejected_log = {}
+  M.filter = "all"
+  M.line_map = {}
+  M.scan.id = M.scan.id + 1
+  M.scan.running = true
+  M.scan.pending_jobs = 0
+  M.scan.finished_jobs = 0
+  M.scan.total_jobs = 0
+  M.scan.errors = {}
+  return M.scan.id
+end
+
+function M.finish_scan(scan_id)
+  if scan_id ~= M.scan.id then
+    return
+  end
+  M.scan.running = false
+end
+
+function M.add_scan_error(scan_id, err)
+  if scan_id ~= M.scan.id or not err or err == "" then
+    return
+  end
+  table.insert(M.scan.errors, err)
+end
+
+function M.merge_files(new_files)
+  local by_key = {}
+  local merged = {}
+
+  local function add_file(file)
+    local key = (file.repo_root or "") .. "::" .. (file.display_path or file.path)
+    if not by_key[key] then
+      by_key[key] = {
+        path = file.path,
+        display_path = file.display_path or file.path,
+        repo_root = file.repo_root,
+        submodule = file.submodule,
+        status = file.status or "modified",
+        added = 0,
+        deleted = 0,
+        pending = {},
+        accepted = {},
+        rejected = {},
+      }
+      table.insert(merged, by_key[key])
+    end
+    local target = by_key[key]
+    target.added = target.added + (file.added or 0)
+    target.deleted = target.deleted + (file.deleted or 0)
+    for _, field in ipairs({ "pending", "accepted", "rejected" }) do
+      for _, hunk in ipairs(file[field] or {}) do
+        table.insert(target[field], hunk)
+      end
+    end
+  end
+
+  for _, file in ipairs(M.files or {}) do
+    add_file(file)
+  end
+  for _, file in ipairs(new_files or {}) do
+    add_file(file)
+  end
+
+  table.sort(merged, function(a, b)
+    local ga = a.submodule or ""
+    local gb = b.submodule or ""
+    if ga ~= gb then return ga < gb end
+    return (a.display_path or a.path) < (b.display_path or b.path)
+  end)
+  M.files = merged
+end
 
 function M.reset_for_root(root)
   if M.root ~= root then
