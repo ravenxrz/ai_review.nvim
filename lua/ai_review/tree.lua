@@ -58,6 +58,27 @@ local function sorted_children(node)
   return node.children
 end
 
+-- Path compression: collapse a chain of directories that each contain exactly
+-- one subdirectory and no files/hunks into a single node (e.g. `a/b/c`), until
+-- the first file or a branch is reached. Runs bottom-up so nested chains fold
+-- fully. The `submodule` and `root` nodes are anchors and are never merged into.
+local function compress_dirs(node)
+  for _, c in ipairs(node.children or {}) do
+    compress_dirs(c)
+  end
+  if node.kind ~= "dir" then
+    return
+  end
+  -- Keep merging while this dir has exactly one child and that child is a dir.
+  while #node.children == 1 and node.children[1].kind == "dir" do
+    local only = node.children[1]
+    node.name = node.name .. "/" .. only.name
+    node.key = only.key
+    node.children = only.children
+    node.child_map = only.child_map
+  end
+end
+
 function M.build(files)
   local root = new_node("root", "root", "root::")
   for _, file in ipairs(files or {}) do
@@ -105,6 +126,7 @@ function M.build(files)
       table.insert(file_node.children, hnode)
     end
   end
+  compress_dirs(root)
   return root
 end
 

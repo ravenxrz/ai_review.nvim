@@ -48,4 +48,47 @@ describe("inline_diff.compute_decorations", function()
     assert.are.equal(0, d.anchor_row)
     assert.is_true(d.anchor_above)
   end)
+
+  it("collects added lines for char diff pairing", function()
+    local hunk = {
+      old_start = 1, old_count = 1, new_start = 1, new_count = 1,
+      header = "@@ -1,1 +1,1 @@",
+      patch = { "@@ -1,1 +1,1 @@", "-foo bar", "+foo BAR" },
+    }
+    local d = inline.compute_decorations(hunk)
+    assert.are.same({ "foo bar" }, d.deleted)
+    assert.are.same({ "foo BAR" }, d.added)
+  end)
+end)
+
+describe("inline_diff.char_diff", function()
+  it("returns nil for identical strings", function()
+    assert.is_nil(inline.char_diff("same", "same"))
+  end)
+
+  it("finds changed middle segment (byte ranges, exclusive end)", function()
+    -- "foo bar" vs "foo BAR": common prefix "foo ", differing "bar"/"BAR"
+    local d = inline.char_diff("foo bar", "foo BAR")
+    assert.are.same({ 4, 7 }, d.a) -- bytes 4..7 -> "bar"
+    assert.are.same({ 4, 7 }, d.b) -- bytes 4..7 -> "BAR"
+  end)
+
+  it("pure insertion: added chars only on b side", function()
+    local d = inline.char_diff("ab", "aXb")
+    assert.are.equal(d.a[1], d.a[2]) -- empty range on a
+    assert.are.same({ 1, 2 }, d.b) -- "X"
+  end)
+
+  it("pure deletion: removed chars only on a side", function()
+    local d = inline.char_diff("aXb", "ab")
+    assert.are.same({ 1, 2 }, d.a) -- "X"
+    assert.are.equal(d.b[1], d.b[2]) -- empty range on b
+  end)
+
+  it("utf-8 safe: differing multibyte char", function()
+    local d = inline.char_diff("héllo", "hallo")
+    -- prefix "h", then é(2 bytes) vs a(1 byte)
+    assert.are.equal(1, d.a[1])
+    assert.are.equal(1, d.b[1])
+  end)
 end)

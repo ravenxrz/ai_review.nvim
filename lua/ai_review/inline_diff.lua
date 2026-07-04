@@ -12,16 +12,20 @@ M.undo_stack = {} -- history of inline accept/reject ops, most recent last
 
 -- Pure core: turn a parsed diff hunk into an inline decoration spec.
 -- deleted     : list of removed original line texts (shown as virt_lines)
+-- added       : list of added line texts (for intra-line char diff pairing)
 -- add_start   : 1-indexed first added line in the current buffer
 -- add_count   : number of added lines (0 for pure delete)
 -- anchor_row  : 0-indexed row to attach the deleted virt_lines
 -- anchor_above: whether virt_lines render above anchor_row
 function M.compute_decorations(hunk)
   local deleted = {}
+  local added = {}
   for _, line in ipairs(hunk.patch or {}) do
     local prefix = line:sub(1, 1)
     if prefix == "-" and not line:match("^%-%-%-") then
       table.insert(deleted, line:sub(2))
+    elseif prefix == "+" and not line:match("^%+%+%+") then
+      table.insert(added, line:sub(2))
     end
   end
   local new_start = hunk.new_start or 0
@@ -30,11 +34,56 @@ function M.compute_decorations(hunk)
   local anchor_row = math.max(new_start - 1, 0)
   return {
     deleted = deleted,
+    added = added,
     add_start = add_start,
     add_count = add_count,
     anchor_row = anchor_row,
     anchor_above = true,
   }
+end
+
+-- Byte offset (0-indexed) of the start of the k-th UTF-8 char in `s`.
+-- For k == #pos + 1 returns #s (one past the end).
+local function byteoff(pos, s, k)
+  if k > #pos then
+    return #s
+  end
+  return pos[k] - 1
+end
+
+-- Pure: intra-line char diff of two strings via common prefix/suffix trimming.
+-- Returns nil if identical, otherwise byte ranges [start, stop) of the differing
+-- middle region on each side: { a = { a_s, a_e }, b = { b_s, b_e } }.
+function M.char_diff(a, b)
+  if a == b then
+    return nil
+  end
+  local pa = vim.str_utf_pos(a)
+  local pb = vim.str_utf_pos(b)
+  local na, nb = #pa, #pb
+
+  local function char_at(s, pos, n, k)
+    local sb = byteoff(pos, s, k)
+    local eb = byteoff(pos, s, k + 1)
+    return s:sub(sb + 1, eb)
+  end
+
+  local prefix = 0
+  while prefix < na and prefix < nb
+    and char_at(a, pa, na, prefix + 1) == char_at(b, pb, nb, prefix + 1) do
+    prefix = prefix + 1
+  end
+  local suffix = 0
+  while suffix < (na - prefix) and suffix < (nb - prefix)
+    and char_at(a, pa, na, na - suffix) == char_at(b, pb, nb, nb - suffix) do
+    suffix = suffix + 1
+  end
+
+  local a_s = byteoff(pa, a, prefix + 1)
+  local a_e = (na - suffix >= prefix) and byteoff(pa, a, na - suffix + 1) or a_s
+  local b_s = byteoff(pb, b, prefix + 1)
+  local b_e = (nb - suffix >= prefix) and byteoff(pb, b, nb - suffix + 1) or b_s
+  return { a = { a_s, a_e }, b = { b_s, b_e } }
 end
 
 local function ensure_ns()
@@ -113,12 +162,36 @@ end
 local function place_hunk(buf, ns, hunk)
   local d = M.compute_decorations(hunk)
 
+  -- Pair deleted[i] with added[i] for intra-line (char-level) diff. Only pairs
+  -- that both exist are compared; extra deleted/added lines are shown plainly.
+  local del_diffs, add_diffs = {}, {}
+  local pairs_n = math.min(#d.deleted, #d.added)
+  for i = 1, pairs_n do
+    local cd = M.char_diff(d.deleted[i], d.added[i])
+    if cd then
+      del_diffs[i] = cd.a
+      add_diffs[i] = cd.b
+    end
+  end
+
   -- Deleted (ORIGINAL) lines are shown as virt_lines only; never written back.
+  -- Base red background, with the changed characters emphasized brighter.
   local virt_lines = {}
   if #d.deleted > 0 then
-    table.insert(virt_lines, { { "╭─ removed ", "AiReviewInlineHint" } })
-    for _, text in ipairs(d.deleted) do
-      table.insert(virt_lines, { { "- " .. text, "AiReviewInlineDelete" } })
+    for i, text in ipairs(d.deleted) do
+      local seg = del_diffs[i]
+      if seg and seg[2] > seg[1] then
+        local before = text:sub(1, seg[1])
+        local mid = text:sub(seg[1] + 1, seg[2])
+        local after = text:sub(seg[2] + 1)
+        local chunks = {}
+        if before ~= "" then table.insert(chunks, { before, "AiReviewInlineDelete" }) end
+        table.insert(chunks, { mid, "AiReviewInlineDeleteText" })
+        if after ~= "" then table.insert(chunks, { after, "AiReviewInlineDelete" }) end
+        table.insert(virt_lines, chunks)
+      else
+        table.insert(virt_lines, { { text ~= "" and text or " ", "AiReviewInlineDelete" } })
+      end
     end
   end
 
@@ -134,6 +207,7 @@ local function place_hunk(buf, ns, hunk)
   end
 
   -- Added (CURRENT) lines are highlighted directly in the real buffer, editable.
+  -- Full line gets a soft green background; changed characters get a stronger one.
   if d.add_count > 0 then
     local last = math.min(d.add_start + d.add_count - 1, line_count)
     for line = d.add_start, last do
@@ -143,6 +217,15 @@ local function place_hunk(buf, ns, hunk)
         sign_hl_group = "AiReviewInlineSign",
         priority = 190,
       })
+      local seg = add_diffs[line - d.add_start + 1]
+      if seg and seg[2] > seg[1] then
+        pcall(vim.api.nvim_buf_set_extmark, buf, ns, line - 1, seg[1], {
+          end_row = line - 1,
+          end_col = seg[2],
+          hl_group = "AiReviewInlineAddText",
+          priority = 195,
+        })
+      end
     end
   end
 end

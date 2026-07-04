@@ -34,11 +34,15 @@ local function set_soft_diff_highlights()
     vim.api.nvim_set_hl(0, "AiReviewDiffCurrent", { bg = "#2d432d", default = true })
     vim.api.nvim_set_hl(0, "AiReviewInlineAdd", { bg = "#2d432d", default = true })
     vim.api.nvim_set_hl(0, "AiReviewInlineDelete", { bg = "#4a2c2f", fg = "#e0a0a0", default = true })
+    vim.api.nvim_set_hl(0, "AiReviewInlineAddText", { bg = "#3d6a3d", default = true })
+    vim.api.nvim_set_hl(0, "AiReviewInlineDeleteText", { bg = "#6e3236", fg = "#f2c0c0", default = true })
   else
     vim.api.nvim_set_hl(0, "AiReviewDiffOriginal", { bg = "#ffd6d6", default = true })
     vim.api.nvim_set_hl(0, "AiReviewDiffCurrent", { bg = "#d6efd6", default = true })
     vim.api.nvim_set_hl(0, "AiReviewInlineAdd", { bg = "#d6efd6", default = true })
     vim.api.nvim_set_hl(0, "AiReviewInlineDelete", { bg = "#ffd6d6", fg = "#a04040", default = true })
+    vim.api.nvim_set_hl(0, "AiReviewInlineAddText", { bg = "#a6e3a1", default = true })
+    vim.api.nvim_set_hl(0, "AiReviewInlineDeleteText", { bg = "#f5a9a9", fg = "#7a1f1f", default = true })
   end
 end
 
