@@ -1,3 +1,5 @@
+[[toc]]
+
 # ai_review.nvim
 
 [English](README.md) | 中文文档
@@ -11,17 +13,18 @@
 - rejected：当前 sidebar 会话中已 reject、已从 working tree 回退的 hunk
 - 手动 refresh：清理已处理 hunk，只显示剩余 pending hunk
 
-插件还支持在源码 buffer 中用 virtual lines 显示 conflict-style preview。这个预览受 merge conflict UI 启发，但不会把 conflict marker 写进真实文件。
+插件还支持在源码 buffer 中显示 Cursor 风格的行内 diff 预览：删除行以红色 virtual lines 显示（不会写入真实文件），新增行则直接在真实 buffer 文本上高亮，因此不会重复显示「改后代码」，而且你可以随时实时编辑它。
 
 ## 功能特性
 
 - 左侧 sidebar 显示改动文件和 hunk。
 - 基于 Git patch 的 hunk accept/reject。
 - 在 refresh 前，可以 undo accepted/rejected hunk。
-- 源码 buffer 内 conflict-style 预览：
-  - `<<<<<<< ORIGINAL`
-  - `======= CURRENT`
-  - `>>>>>>> END`
+- 源码 buffer 内 Cursor 风格行内预览：
+  - 删除行以红色 virtual lines 显示（不写入磁盘）
+  - 新增行在真实、可编辑的 buffer 文本上高亮
+  - 不重复显示「改后代码」
+- 可直接在源码 buffer 上 accept/reject 光标所在 hunk，编辑后依然正确。
 - `[g` / `]g` hunk 导航，并自动打开/更新源码内预览。
 - 手动 `R` refresh 会清理已处理 hunk，让 sidebar 只关注剩余未处理改动。
 
@@ -38,7 +41,7 @@
 
 ```lua
 {
-  "your-name/ai_review.nvim",
+  "ravenxrz/ai_review.nvim",
   dependencies = {
     "lewis6991/gitsigns.nvim",
     "nvim-tree/nvim-web-devicons",
@@ -53,25 +56,6 @@
         width = 50,
       },
     })
-  end,
-}
-```
-
-本地开发配置示例：
-
-```lua
-{
-  dir = "/path/to/ai_review.nvim",
-  name = "ai-review.nvim",
-  dependencies = {
-    "lewis6991/gitsigns.nvim",
-    "nvim-tree/nvim-web-devicons",
-  },
-  keys = {
-    { "<leader>ar", function() require("ai_review").toggle() end, desc = "AI Review" },
-  },
-  config = function()
-    require("ai_review").setup()
   end,
 }
 ```
@@ -119,6 +103,11 @@ require("ai_review").setup({
     expand_all = "zR",
     collapse_all = "zM",
     toggle_submodules = "S",
+    inline = {
+      accept = "<leader>aa",
+      reject = "<leader>ax",
+      undo = "<leader>au",
+    },
   },
   git = {
     root_cache = true,
@@ -156,6 +145,10 @@ require("ai_review").setup({
 
 控制 AI Review sidebar 内的 buffer-local 快捷键。配置值可以是字符串，也可以是字符串列表。
 
+### `keymaps.inline`
+
+控制行内预览生效时，安装在源码文件 buffer 上的 buffer-local 快捷键。配置值可以是字符串、字符串列表，或 `false` 表示禁用。`accept` 会 accept 光标所在 hunk（stage 到 index），`reject` 会 reject 它（回退 working tree 改动），`undo` 会撤销最近一次 inline accept/reject。accept 和 reject 都会先保存 buffer 再重新 diff，因此即使你编辑过「改后代码」也依然正确。
+
 ### `git`
 
 - `root_cache`：在当前 Neovim session 中缓存 Git root 查找结果。
@@ -187,7 +180,6 @@ require("ai_review").setup({
 - `:AiReviewToggle`：切换 sidebar
 - `:AiReviewRefresh`：刷新 sidebar
 - `:AiReviewToggleSubmodules`：开关 submodule 扫描并刷新 sidebar
-- `:AiReviewToggleConflictDiff`：在当前 buffer hunk 上切换 conflict-style diff
 - `:AiReviewFocus`：在 sidebar/source 窗口之间切换焦点
 - `:AiReviewFocusSidebar`：聚焦 AI Review sidebar
 - `:AiReviewFocusSource`：聚焦源码窗口
@@ -197,7 +189,7 @@ require("ai_review").setup({
 | 快捷键 | 功能 |
 | --- | --- |
 | `<CR>` / `o` | 跳转到 hunk，或展开/折叠文件 |
-| `p` | 显示当前 hunk 的源码内 conflict-style preview |
+| `p` | 显示当前 hunk 的 Cursor 风格源码内行内预览 |
 | `]g` | 下一个 hunk，并自动 preview |
 | `[g` | 上一个 hunk，并自动 preview |
 | `a` / `s` | accept 当前 pending hunk |
@@ -220,8 +212,8 @@ require("ai_review").setup({
 2. 让 AI/Codex 修改代码。
 3. 使用 `:AiReviewToggle` 或你的快捷键打开 AI Review。
 4. 使用 `[g` / `]g` 在 hunk 间导航。
-5. 在源码 buffer 中查看 conflict-style preview。
-6. 使用 `a` accept，使用 `x` reject，使用 `u` undo。
+5. 在源码 buffer 中查看 Cursor 风格行内预览：删除行显示为红色 virtual lines，新增行在真实可编辑文本上高亮。
+6. 在 sidebar 中用 `a` accept、`x` reject、`u` undo，或用 `keymaps.inline` 直接在源码 buffer 上 accept/reject 光标所在 hunk。
 7. 使用 `R` refresh，清理已处理 hunk。
 
 ## 设计说明
@@ -230,4 +222,6 @@ require("ai_review").setup({
 
 accepted/rejected 状态只在当前 sidebar 会话中临时显示，方便你在 refresh 前撤销操作。按 `R` refresh 后，sidebar 会清掉已处理 hunk，只保留当前仍 pending 的改动。
 
-源码中的 conflict-style preview 使用 virtual lines 实现，不会写入真实文件，也不会改变 Git diff。
+源码中的行内预览使用 virtual lines 和 buffer 高亮实现，不会写入真实文件，也不会改变 Git diff。
+
+如果你想快速、独立地查看单个 hunk，仍可以使用 `gitsigns.nvim`，例如把 `require("gitsigns").preview_hunk` 映射到 `<leader>gp` 之类的快捷键。

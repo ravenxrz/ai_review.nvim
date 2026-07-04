@@ -1,3 +1,5 @@
+[[toc]]
+
 # ai_review.nvim
 
 [中文文档](README.zh-CN.md) | English
@@ -11,17 +13,18 @@ The plugin treats your working tree as an AI review queue:
 - rejected = hunk reverse-applied during the current sidebar session
 - manual refresh clears processed rows and shows only remaining pending hunks
 
-It also provides an inline conflict-style preview in the source buffer using virtual lines. The preview is inspired by merge-conflict UIs, but it never writes conflict markers into your files.
+It also provides a Cursor-style inline diff preview in the source buffer using virtual lines and buffer highlights. Removed lines are rendered as red virtual lines (never written to your files), while added lines are highlighted directly on the real buffer text so there is no duplicated "after" code and you can keep editing it live.
 
 ## Features
 
 - Polished left sidebar listing changed files and hunks.
 - Hunk accept/reject via Git patch operations.
 - Undo accepted/rejected hunk before refresh.
-- Source-buffer preview using virtual lines:
-  - `<<<<<<< ORIGINAL`
-  - `======= CURRENT`
-  - `>>>>>>> END`
+- Cursor-style inline preview in the source buffer:
+  - removed lines shown as red virtual lines (not written to disk)
+  - added lines highlighted on the real, editable buffer text
+  - no duplicated "after" code
+- Accept/reject the hunk under the cursor directly from the source buffer, even after editing it.
 - `[g` / `]g` hunk navigation with automatic inline preview.
 - Manual refresh clears processed hunks and keeps the sidebar focused on unresolved changes.
 
@@ -38,7 +41,7 @@ It also provides an inline conflict-style preview in the source buffer using vir
 
 ```lua
 {
-  "your-name/ai_review.nvim",
+  "ravenxrz/ai_review.nvim",
   dependencies = {
     "lewis6991/gitsigns.nvim",
     "nvim-tree/nvim-web-devicons",
@@ -56,26 +59,6 @@ It also provides an inline conflict-style preview in the source buffer using vir
   end,
 }
 ```
-
-For local development:
-
-```lua
-{
-  dir = "/path/to/ai_review.nvim",
-  name = "ai-review.nvim",
-  dependencies = {
-    "lewis6991/gitsigns.nvim",
-    "nvim-tree/nvim-web-devicons",
-  },
-  keys = {
-    { "<leader>ar", function() require("ai_review").toggle() end, desc = "AI Review" },
-  },
-  config = function()
-    require("ai_review").setup()
-  end,
-}
-```
-
 
 ## Configuration
 
@@ -119,6 +102,11 @@ require("ai_review").setup({
     expand_all = "zR",
     collapse_all = "zM",
     toggle_submodules = "S",
+    inline = {
+      accept = "<leader>aa",
+      reject = "<leader>ax",
+      undo = "<leader>au",
+    },
   },
   git = {
     root_cache = true,
@@ -156,6 +144,10 @@ Controls symbols used in the sidebar. You can replace them with ASCII-only symbo
 
 Controls buffer-local mappings inside the AI Review sidebar. Values can be either a string or a list of strings.
 
+### `keymaps.inline`
+
+Controls buffer-local mappings installed on the source file buffer while the Cursor-style inline preview is active. Values can be a string, a list of strings, or `false` to disable. `accept` accepts the hunk under the cursor (stages it), `reject` rejects it (reverts the working-tree change), and `undo` rolls back the most recent inline accept/reject. Both accept and reject save the buffer first, then re-diff, so they stay correct even after you edit the "after" code.
+
 ### `git`
 
 - `root_cache`: cache Git root lookup results in the current Neovim session.
@@ -187,7 +179,6 @@ Note: `submodules.enabled` controls the initial state only. You can toggle submo
 - `:AiReviewToggle`
 - `:AiReviewRefresh`
 - `:AiReviewToggleSubmodules`
-- `:AiReviewToggleConflictDiff`
 - `:AiReviewFocus`
 - `:AiReviewFocusSidebar`
 - `:AiReviewFocusSource`
@@ -197,7 +188,7 @@ Note: `submodules.enabled` controls the initial state only. You can toggle submo
 | Key | Action |
 | --- | --- |
 | `<CR>` / `o` | Jump to hunk, or expand/collapse file |
-| `p` | Show inline conflict-style preview for current hunk |
+| `p` | Show Cursor-style inline diff preview for current hunk |
 | `]g` | Next hunk and auto preview |
 | `[g` | Previous hunk and auto preview |
 | `a` / `s` | Accept current pending hunk |
@@ -220,10 +211,12 @@ Note: `submodules.enabled` controls the initial state only. You can toggle submo
 2. Let your AI tool modify files.
 3. Open AI Review with `:AiReviewToggle` or your keymap.
 4. Navigate hunks with `[g` / `]g`.
-5. Inspect inline conflict-style preview in the source buffer.
-6. Use `a` to accept, `x` to reject, `u` to undo.
+5. Inspect the Cursor-style inline preview in the source buffer: removed lines appear as red virtual lines, added lines are highlighted on the real editable text.
+6. Use `a` to accept, `x` to reject, `u` to undo from the sidebar, or accept/reject the hunk under the cursor directly in the source buffer with the `keymaps.inline` mappings.
 7. Press `R` to refresh and remove processed hunks.
 
 ## Notes
 
 This plugin does not store persistent review history. Git remains the source of truth.
+
+For a quick, standalone view of a single hunk you can still use `gitsigns.nvim`, e.g. map `require("gitsigns").preview_hunk` to a key such as `<leader>gp`.

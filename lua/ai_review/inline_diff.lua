@@ -1,0 +1,397 @@
+local config = require("ai_review.config")
+local state = require("ai_review.state")
+local highlights = require("ai_review.highlights")
+local git = require("ai_review.git")
+local parser = require("ai_review.parser")
+
+local M = {}
+
+M.ns = nil
+M.decorated = {} -- [bufnr] = true, buffers currently decorated
+M.undo_stack = {} -- history of inline accept/reject ops, most recent last
+
+-- Pure core: turn a parsed diff hunk into an inline decoration spec.
+-- deleted     : list of removed original line texts (shown as virt_lines)
+-- add_start   : 1-indexed first added line in the current buffer
+-- add_count   : number of added lines (0 for pure delete)
+-- anchor_row  : 0-indexed row to attach the deleted virt_lines
+-- anchor_above: whether virt_lines render above anchor_row
+function M.compute_decorations(hunk)
+  local deleted = {}
+  for _, line in ipairs(hunk.patch or {}) do
+    local prefix = line:sub(1, 1)
+    if prefix == "-" and not line:match("^%-%-%-") then
+      table.insert(deleted, line:sub(2))
+    end
+  end
+  local new_start = hunk.new_start or 0
+  local add_count = hunk.new_count or 0
+  local add_start = new_start > 0 and new_start or 1
+  local anchor_row = math.max(new_start - 1, 0)
+  return {
+    deleted = deleted,
+    add_start = add_start,
+    add_count = add_count,
+    anchor_row = anchor_row,
+    anchor_above = true,
+  }
+end
+
+local function ensure_ns()
+  if not M.ns then
+    M.ns = vim.api.nvim_create_namespace("ai_review_inline_diff")
+  end
+  return M.ns
+end
+
+local function is_valid_buf(buf)
+  return buf and vim.api.nvim_buf_is_valid(buf)
+end
+
+local function notify(msg, level)
+  vim.notify(msg, level or vim.log.levels.INFO, { title = "AI Review" })
+end
+
+-- Find the loaded source buffer that backs a given hunk file.
+local function buffer_for_file(root, file)
+  local full = (root or state.root) .. "/" .. file
+  local normalized = vim.fn.fnamemodify(full, ":p")
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf)
+      and vim.fn.fnamemodify(vim.api.nvim_buf_get_name(buf), ":p") == normalized then
+      return buf
+    end
+  end
+  return nil
+end
+
+-- Re-diff a buffer's file against the index using fresh disk content.
+-- Returns { file = relpath, root = repo_root, hunks = {...} }.
+local function rediff_buffer(buf)
+  local file = vim.api.nvim_buf_get_name(buf)
+  if file == "" then
+    return nil, "buffer has no file"
+  end
+  local root, err = git.find_root(file)
+  if not root then
+    return nil, err or "not a git repo"
+  end
+  local rel = vim.fn.fnamemodify(file, ":p"):sub(#root + 2)
+  local code, diff_lines = git.diff(root)
+  if code ~= 0 then
+    return nil, table.concat(diff_lines, "\n")
+  end
+  local files = parser.parse(diff_lines, "pending", { repo_root = root })
+  local hunks = {}
+  for _, f in ipairs(files) do
+    if f.path == rel then
+      hunks = f.pending or {}
+      break
+    end
+  end
+  return { file = rel, root = root, hunks = hunks }
+end
+
+-- Pick the pending hunk under (or nearest to) the cursor.
+local function hunk_at_cursor(info)
+  local cursor = vim.api.nvim_win_get_cursor(0)[1]
+  local nearest, best
+  for _, h in ipairs(info.hunks or {}) do
+    local start_line = math.max(h.new_start or 1, 1)
+    local count = math.max(h.new_count or 1, 1)
+    if cursor >= start_line and cursor <= start_line + count - 1 then
+      return h
+    end
+    local dist = math.abs(cursor - start_line)
+    if not best or dist < best then
+      nearest, best = h, dist
+    end
+  end
+  return nearest
+end
+
+local function place_hunk(buf, ns, hunk)
+  local d = M.compute_decorations(hunk)
+
+  -- Deleted (ORIGINAL) lines are shown as virt_lines only; never written back.
+  local virt_lines = {}
+  if #d.deleted > 0 then
+    table.insert(virt_lines, { { "╭─ removed ", "AiReviewInlineHint" } })
+    for _, text in ipairs(d.deleted) do
+      table.insert(virt_lines, { { "- " .. text, "AiReviewInlineDelete" } })
+    end
+  end
+
+  local line_count = vim.api.nvim_buf_line_count(buf)
+  local anchor = math.min(d.anchor_row, math.max(line_count - 1, 0))
+  if #virt_lines > 0 then
+    vim.api.nvim_buf_set_extmark(buf, ns, anchor, 0, {
+      virt_lines = virt_lines,
+      virt_lines_above = d.anchor_above,
+      hl_mode = "combine",
+      priority = 200,
+    })
+  end
+
+  -- Added (CURRENT) lines are highlighted directly in the real buffer, editable.
+  if d.add_count > 0 then
+    local last = math.min(d.add_start + d.add_count - 1, line_count)
+    for line = d.add_start, last do
+      vim.api.nvim_buf_set_extmark(buf, ns, line - 1, 0, {
+        line_hl_group = "AiReviewInlineAdd",
+        sign_text = "▎",
+        sign_hl_group = "AiReviewInlineSign",
+        priority = 190,
+      })
+    end
+  end
+end
+
+local function normalize_keys(value)
+  if value == false or value == nil then
+    return {}
+  end
+  if type(value) == "table" then
+    return value
+  end
+  return { value }
+end
+
+local function attach_keymaps(buf)
+  if vim.b[buf].ai_review_inline_keys then
+    return
+  end
+  vim.b[buf].ai_review_inline_keys = true
+  local km = ((config.options.keymaps or {}).inline or {})
+  local opt = { buffer = buf, silent = true, nowait = true }
+  for _, lhs in ipairs(normalize_keys(km.accept)) do
+    vim.keymap.set("n", lhs, M.accept_at_cursor,
+      vim.tbl_extend("force", opt, { desc = "AI Review accept hunk (inline)" }))
+  end
+  for _, lhs in ipairs(normalize_keys(km.reject)) do
+    vim.keymap.set("n", lhs, M.reject_at_cursor,
+      vim.tbl_extend("force", opt, { desc = "AI Review reject hunk (inline)" }))
+  end
+  for _, lhs in ipairs(normalize_keys(km.undo)) do
+    vim.keymap.set("n", lhs, M.undo_last,
+      vim.tbl_extend("force", opt, { desc = "AI Review undo last inline accept/reject" }))
+  end
+end
+
+local redraw_timer
+
+local function schedule_redraw(buf)
+  if redraw_timer then
+    redraw_timer:stop()
+    redraw_timer:close()
+  end
+  redraw_timer = vim.loop.new_timer()
+  redraw_timer:start(150, 0, function()
+    vim.schedule(function()
+      if redraw_timer then
+        redraw_timer:stop()
+        redraw_timer:close()
+        redraw_timer = nil
+      end
+      if is_valid_buf(buf) and M.decorated[buf] then
+        M.render_buffer(buf)
+      end
+    end)
+  end)
+end
+
+local autocmd_installed = false
+
+local function install_autocmds()
+  if autocmd_installed then
+    return
+  end
+  autocmd_installed = true
+  local group = vim.api.nvim_create_augroup("AiReviewInlineDiff", { clear = true })
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "BufWritePost" }, {
+    group = group,
+    callback = function(args)
+      if M.decorated[args.buf] then
+        schedule_redraw(args.buf)
+      end
+    end,
+  })
+end
+
+function M.clear_buffer(buf)
+  if not is_valid_buf(buf) then
+    return
+  end
+  local ns = ensure_ns()
+  pcall(vim.api.nvim_buf_clear_namespace, buf, ns, 0, -1)
+  M.decorated[buf] = nil
+end
+
+function M.render_buffer(buf)
+  buf = buf or vim.api.nvim_get_current_buf()
+  if not is_valid_buf(buf) then
+    return
+  end
+  highlights.setup()
+  local ns = ensure_ns()
+  pcall(vim.api.nvim_buf_clear_namespace, buf, ns, 0, -1)
+  local info = rediff_buffer(buf)
+  if not info or #info.hunks == 0 then
+    M.decorated[buf] = nil
+    return
+  end
+  for _, hunk in ipairs(info.hunks) do
+    place_hunk(buf, ns, hunk)
+  end
+  attach_keymaps(buf)
+  install_autocmds()
+  M.decorated[buf] = true
+end
+
+function M.close_all()
+  for buf in pairs(M.decorated) do
+    M.clear_buffer(buf)
+  end
+  M.decorated = {}
+end
+
+-- Compatibility alias for old diff_view call sites.
+function M.close()
+  M.close_all()
+end
+
+-- Called from sidebar preview/navigation: decorate the hunk's file and center
+-- the source window cursor on the hunk.
+function M.show(hunk, opts)
+  opts = opts or {}
+  if not hunk then
+    return
+  end
+  local buf = buffer_for_file(hunk.repo_root or state.root, hunk.file)
+    or vim.api.nvim_get_current_buf()
+  if not is_valid_buf(buf) then
+    return
+  end
+  M.render_buffer(buf)
+
+  local target_line = math.max(hunk.new_start or 1, 1)
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_win_get_buf(win) == buf and win ~= state.sidebar_win then
+      local lc = vim.api.nvim_buf_line_count(buf)
+      pcall(vim.api.nvim_win_set_cursor, win, { math.min(target_line, lc), 0 })
+      pcall(vim.api.nvim_win_call, win, function() vim.cmd("normal! zz") end)
+      break
+    end
+  end
+
+  if opts.focus_sidebar ~= false
+    and state.sidebar_win and vim.api.nvim_win_is_valid(state.sidebar_win) then
+    vim.api.nvim_set_current_win(state.sidebar_win)
+  end
+end
+
+-- Save the buffer (if it has unsaved edits) so disk == buffer before diffing.
+local function save_if_modified(buf)
+  if vim.bo[buf].modified then
+    pcall(vim.api.nvim_buf_call, buf, function()
+      vim.cmd("silent noautocmd write")
+    end)
+  end
+end
+
+function M.accept_at_cursor()
+  local buf = vim.api.nvim_get_current_buf()
+  save_if_modified(buf)
+  local info, err = rediff_buffer(buf)
+  if not info then
+    notify(err or "rediff failed", vim.log.levels.WARN)
+    return
+  end
+  local hunk = hunk_at_cursor(info)
+  if not hunk then
+    notify("光标不在任何 pending hunk 上", vim.log.levels.WARN)
+    return
+  end
+  hunk.file = info.file
+  hunk.repo_root = info.root
+  local code, out = git.apply_hunk_to_index(info.root, hunk)
+  if code ~= 0 then
+    notify("accept 失败:\n" .. table.concat(out, "\n"), vim.log.levels.ERROR)
+    return
+  end
+  table.insert(M.undo_stack, {
+    op = "accept",
+    root = info.root,
+    file = info.file,
+    hunk = vim.deepcopy(hunk),
+  })
+  M.render_buffer(buf)
+  pcall(function() require("ai_review").refresh() end)
+end
+
+function M.reject_at_cursor()
+  local buf = vim.api.nvim_get_current_buf()
+  save_if_modified(buf)
+  local info, err = rediff_buffer(buf)
+  if not info then
+    notify(err or "rediff failed", vim.log.levels.WARN)
+    return
+  end
+  local hunk = hunk_at_cursor(info)
+  if not hunk then
+    notify("光标不在任何 pending hunk 上", vim.log.levels.WARN)
+    return
+  end
+  hunk.file = info.file
+  hunk.repo_root = info.root
+  local code, out = git.apply_reverse_hunk(info.root, hunk)
+  if code ~= 0 then
+    notify("reject 失败:\n" .. table.concat(out, "\n"), vim.log.levels.ERROR)
+    return
+  end
+  table.insert(M.undo_stack, {
+    op = "reject",
+    root = info.root,
+    file = info.file,
+    hunk = vim.deepcopy(hunk),
+  })
+  vim.cmd("checktime")
+  M.render_buffer(buf)
+  pcall(function() require("ai_review").refresh() end)
+end
+
+-- Undo the most recent inline accept/reject.
+--   accept  -> unstage the hunk from the index (git apply --cached --reverse)
+--   reject  -> re-apply the hunk to the working tree (git apply)
+function M.undo_last()
+  local entry = table.remove(M.undo_stack)
+  if not entry then
+    notify("没有可撤销的 inline accept/reject 操作", vim.log.levels.WARN)
+    return
+  end
+  local code, out
+  if entry.op == "accept" then
+    code, out = git.unapply_hunk_from_index(entry.root, entry.hunk)
+  else
+    code, out = git.apply_hunk(entry.root, entry.hunk)
+  end
+  if code ~= 0 then
+    -- Put it back so the user can retry or resolve manually.
+    table.insert(M.undo_stack, entry)
+    notify("撤销失败:\n" .. table.concat(out or {}, "\n"), vim.log.levels.ERROR)
+    return
+  end
+  vim.cmd("checktime")
+  local buf = buffer_for_file(entry.root, entry.file)
+  if is_valid_buf(buf) then
+    M.render_buffer(buf)
+  end
+  notify("已撤销上一个 inline " .. entry.op .. " 操作")
+  pcall(function() require("ai_review").refresh() end)
+end
+
+function M.is_open()
+  return next(M.decorated) ~= nil
+end
+
+return M

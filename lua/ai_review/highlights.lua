@@ -19,6 +19,9 @@ local links = {
   AiReviewDiffSeparator = "Comment",
   AiReviewDiffEndLabel = "DiffText",
   AiReviewDiffHeader = "Title",
+  AiReviewInlineSign = "DiffAdd",
+  AiReviewInlineDeleteSign = "DiffDelete",
+  AiReviewInlineHint = "Comment",
 }
 
 local function set_link(group, target)
@@ -29,9 +32,13 @@ local function set_soft_diff_highlights()
   if vim.o.background == "dark" then
     vim.api.nvim_set_hl(0, "AiReviewDiffOriginal", { bg = "#4a2c2f", default = true })
     vim.api.nvim_set_hl(0, "AiReviewDiffCurrent", { bg = "#2d432d", default = true })
+    vim.api.nvim_set_hl(0, "AiReviewInlineAdd", { bg = "#2d432d", default = true })
+    vim.api.nvim_set_hl(0, "AiReviewInlineDelete", { bg = "#4a2c2f", fg = "#e0a0a0", default = true })
   else
     vim.api.nvim_set_hl(0, "AiReviewDiffOriginal", { bg = "#ffd6d6", default = true })
     vim.api.nvim_set_hl(0, "AiReviewDiffCurrent", { bg = "#d6efd6", default = true })
+    vim.api.nvim_set_hl(0, "AiReviewInlineAdd", { bg = "#d6efd6", default = true })
+    vim.api.nvim_set_hl(0, "AiReviewInlineDelete", { bg = "#ffd6d6", fg = "#a04040", default = true })
   end
 end
 

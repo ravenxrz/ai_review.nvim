@@ -42,6 +42,14 @@ M.defaults = {
     expand_all = "zR",
     collapse_all = "zM",
     toggle_submodules = "S",
+    -- Buffer-local mappings installed on the source file buffer while the
+    -- Cursor-style inline preview is active. Values may be a string, a list of
+    -- strings, or false to disable that mapping.
+    inline = {
+      accept = "<leader>aa",
+      reject = "<leader>ax",
+      undo = "<leader>au",
+    },
   },
   git = {
     root_cache = true,

@@ -2,7 +2,7 @@ local config = require("ai_review.config")
 local git = require("ai_review.git")
 local state = require("ai_review.state")
 local ui = require("ai_review.ui")
-local diff_view = require("ai_review.diff_view")
+local diff_view = require("ai_review.inline_diff")
 
 local M = {}
 

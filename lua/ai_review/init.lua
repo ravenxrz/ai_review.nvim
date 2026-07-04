@@ -17,7 +17,7 @@ function M.refresh()
     notify("Not inside a Git repository: " .. (err or ""), vim.log.levels.WARN)
     return
   end
-  require("ai_review.diff_view").close()
+  require("ai_review.inline_diff").close_all()
   require("ai_review.scanner").scan(root)
 end
 
@@ -55,7 +55,6 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("AiReviewToggle", M.toggle, {})
   vim.api.nvim_create_user_command("AiReviewRefresh", M.refresh, {})
   vim.api.nvim_create_user_command("AiReviewToggleSubmodules", function() require("ai_review.actions").toggle_submodules() end, {})
-  vim.api.nvim_create_user_command("AiReviewToggleConflictDiff", function() require("ai_review.diff_view").toggle_current_hunk() end, {})
   vim.api.nvim_create_user_command("AiReviewFocusSidebar", function() require("ai_review.ui").focus() end, {})
   vim.api.nvim_create_user_command("AiReviewFocusSource", function() require("ai_review.ui").focus_source() end, {})
   vim.api.nvim_create_user_command("AiReviewFocus", function() require("ai_review.ui").toggle_focus() end, {})

@@ -210,7 +210,7 @@ end
 
 function M.close()
   pcall(function()
-    require("ai_review.diff_view").close()
+    require("ai_review.inline_diff").close_all()
   end)
   if is_valid_win(state.sidebar_win) then
     vim.api.nvim_win_close(state.sidebar_win, true)

@@ -10,7 +10,7 @@ Commands:
   :AiReviewRefresh    Refresh the sidebar
 
 Default sidebar mappings:
-  p       show conflict-style preview for current hunk
+  p       show Cursor-style inline diff preview for current hunk
   ]g      next hunk and preview
   [g      previous hunk and preview
   a/s     accept hunk
@@ -61,7 +61,6 @@ Commands:
   :AiReviewToggle
   :AiReviewRefresh
   :AiReviewToggleSubmodules
-  :AiReviewToggleConflictDiff
   :AiReviewFocus
   :AiReviewFocusSidebar
   :AiReviewFocusSource
