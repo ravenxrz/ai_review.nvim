@@ -173,6 +173,8 @@ function M.ensure_sidebar()
     install_resize_autocmd()
   end
 
+  require("ai_review.inline_diff").enable_auto_preview()
+
   return buf, win
 end
 
@@ -210,7 +212,9 @@ end
 
 function M.close()
   pcall(function()
-    require("ai_review.inline_diff").close_all()
+    local inline = require("ai_review.inline_diff")
+    inline.disable_auto_preview()
+    inline.close_all()
   end)
   if is_valid_win(state.sidebar_win) then
     vim.api.nvim_win_close(state.sidebar_win, true)

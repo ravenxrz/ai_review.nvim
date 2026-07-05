@@ -69,6 +69,24 @@ M.defaults = {
     render_debounce_ms = 80,
     git_timeout_ms = 5000,
   },
+  preview = {
+    -- While the sidebar is open, automatically render inline hunk previews for
+    -- every source buffer you enter (no need to press `p` first).
+    auto_preview_on_bufenter = true,
+    -- Deleted lines are shown as virtual lines, which indent-guide plugins
+    -- (e.g. hlchunk/indent-blankline) cannot decorate. Draw matching indent
+    -- guides ourselves so deleted virt_lines line up with real buffer lines.
+    indent_guide = {
+      enabled = true,
+      char = "│",
+      hl = "Whitespace",
+    },
+    -- Event-driven indent-guide plugins (e.g. hlchunk) only repaint on
+    -- TextChanged/WinScrolled. When we jump+center a source buffer from the
+    -- sidebar, fire a WinScrolled so those plugins repaint immediately instead
+    -- of only after you scroll manually.
+    nudge_indent_plugins = true,
+  },
 }
 
 M.options = vim.deepcopy(M.defaults)

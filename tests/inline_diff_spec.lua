@@ -92,3 +92,23 @@ describe("inline_diff.char_diff", function()
     assert.are.equal(1, d.b[1])
   end)
 end)
+
+describe("inline_diff.indent_guide_string", function()
+  it("places guide char at each shiftwidth stop for spaces", function()
+    -- 4 spaces, sw=2 -> guide at cols 0 and 2
+    assert.are.equal("│ │ ", inline.indent_guide_string("    ", 2, 2, "│"))
+  end)
+
+  it("no indent -> empty string", function()
+    assert.are.equal("", inline.indent_guide_string("", 2, 2, "│"))
+  end)
+
+  it("expands tabs by tabstop", function()
+    -- one tab, ts=4, sw=4 -> width 4 -> "│   "
+    assert.are.equal("│   ", inline.indent_guide_string("\t", 4, 4, "│"))
+  end)
+
+  it("sw defaults to ts when zero", function()
+    assert.are.equal("│   ", inline.indent_guide_string("    ", 0, 4, "│"))
+  end)
+end)

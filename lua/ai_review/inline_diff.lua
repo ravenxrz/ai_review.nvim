@@ -159,6 +159,28 @@ local function hunk_at_cursor(info)
   return nearest
 end
 
+-- Pure: build an indent-guide string matching a line's leading whitespace.
+-- Places `char` at every indent stop (multiples of sw) and spaces elsewhere,
+-- expanding tabs by `ts`, so deleted virt_lines line up like real buffer lines.
+function M.indent_guide_string(indent_text, sw, ts, char)
+  ts = (ts and ts > 0) and ts or 8
+  sw = (sw and sw > 0) and sw or ts
+  char = char or "│"
+  local width = 0
+  for i = 1, #indent_text do
+    if indent_text:sub(i, i) == "\t" then
+      width = width + (ts - (width % ts))
+    else
+      width = width + 1
+    end
+  end
+  local cells = {}
+  for col = 0, width - 1 do
+    cells[col + 1] = (col % sw == 0) and char or " "
+  end
+  return table.concat(cells)
+end
+
 local function place_hunk(buf, ns, hunk)
   local d = M.compute_decorations(hunk)
 
@@ -176,22 +198,49 @@ local function place_hunk(buf, ns, hunk)
 
   -- Deleted (ORIGINAL) lines are shown as virt_lines only; never written back.
   -- Base red background, with the changed characters emphasized brighter.
+  -- Indent-guide plugins can't decorate virt_lines, so we draw guides ourselves.
+  local ig = (config.options.preview or {}).indent_guide or {}
+  local sw = vim.bo[buf].shiftwidth
+  local ts = vim.bo[buf].tabstop
+  if sw == 0 then sw = ts end
+
+  local function indent_prefix(text)
+    if not ig.enabled then
+      return nil
+    end
+    local lead = text:match("^[ \t]*") or ""
+    if lead == "" then
+      return nil
+    end
+    local guide = M.indent_guide_string(lead, sw, ts, ig.char or "│")
+    return { guide, ig.hl or "Whitespace" }
+  end
+
   local virt_lines = {}
   if #d.deleted > 0 then
     for i, text in ipairs(d.deleted) do
+      -- Body is the line with its leading whitespace stripped; the guide prefix
+      -- reproduces that indent with guide chars so alignment matches real lines.
+      local guide = indent_prefix(text)
+      local body = guide and text:gsub("^[ \t]*", "") or text
+      local base_off = guide and (#text - #body) or 0
       local seg = del_diffs[i]
+      local chunks = {}
+      if guide then table.insert(chunks, guide) end
       if seg and seg[2] > seg[1] then
-        local before = text:sub(1, seg[1])
-        local mid = text:sub(seg[1] + 1, seg[2])
-        local after = text:sub(seg[2] + 1)
-        local chunks = {}
+        -- Shift char-diff byte offsets to account for stripped indent.
+        local s = math.max(seg[1] - base_off, 0)
+        local e = math.max(seg[2] - base_off, 0)
+        local before = body:sub(1, s)
+        local mid = body:sub(s + 1, e)
+        local after = body:sub(e + 1)
         if before ~= "" then table.insert(chunks, { before, "AiReviewInlineDelete" }) end
         table.insert(chunks, { mid, "AiReviewInlineDeleteText" })
         if after ~= "" then table.insert(chunks, { after, "AiReviewInlineDelete" }) end
-        table.insert(virt_lines, chunks)
       else
-        table.insert(virt_lines, { { text ~= "" and text or " ", "AiReviewInlineDelete" } })
+        table.insert(chunks, { body ~= "" and body or " ", "AiReviewInlineDelete" })
       end
+      table.insert(virt_lines, chunks)
     end
   end
 
@@ -301,6 +350,67 @@ local function install_autocmds()
   })
 end
 
+-- Auto-preview: while the sidebar is open, render inline hunks for every source
+-- buffer the user enters, so previews appear without pressing `p`.
+M.auto_preview_group = nil
+
+local function is_previewable_source_buf(buf)
+  if not is_valid_buf(buf) then
+    return false
+  end
+  if vim.bo[buf].buftype ~= "" then
+    return false
+  end
+  local name = vim.api.nvim_buf_get_name(buf)
+  if name == "" then
+    return false
+  end
+  local ui = require("ai_review.ui")
+  -- Reuse the sidebar's source-window filter to skip trees/help/etc.
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_win_get_buf(win) == buf then
+      return ui.is_source_win(win)
+    end
+  end
+  return true
+end
+
+function M.enable_auto_preview()
+  if not ((config.options.preview or {}).auto_preview_on_bufenter) then
+    return
+  end
+  if M.auto_preview_group then
+    return
+  end
+  M.auto_preview_group = vim.api.nvim_create_augroup("AiReviewAutoPreview", { clear = true })
+  vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter" }, {
+    group = M.auto_preview_group,
+    callback = function(args)
+      local buf = args.buf
+      vim.schedule(function()
+        if not is_valid_buf(buf) or M.decorated[buf] then
+          return
+        end
+        if is_previewable_source_buf(buf) then
+          M.render_buffer(buf)
+        end
+      end)
+    end,
+  })
+  -- Also decorate the buffer that is already current when the sidebar opens.
+  local cur = vim.api.nvim_get_current_buf()
+  if is_previewable_source_buf(cur) and not M.decorated[cur] then
+    M.render_buffer(cur)
+  end
+end
+
+function M.disable_auto_preview()
+  if M.auto_preview_group then
+    pcall(vim.api.nvim_del_augroup_by_id, M.auto_preview_group)
+    M.auto_preview_group = nil
+  end
+end
+
 function M.clear_buffer(buf)
   if not is_valid_buf(buf) then
     return
@@ -343,6 +453,33 @@ function M.close()
   M.close_all()
 end
 
+-- Event-driven indent-guide plugins (hlchunk, indent-blankline) only repaint on
+-- TextChanged/BufWinEnter/WinScrolled. After we jump+center a source window they
+-- may still show the pre-scroll indent guides until the user scrolls. hlchunk's
+-- WinScrolled handler reads per-window data from vim.v.event, which cannot be
+-- populated via nvim_exec_autocmds; its BufWinEnter handler instead recomputes
+-- the visible range on its own, so we fire BufWinEnter to force a repaint.
+local function nudge_indent_plugins(win)
+  if not ((config.options.preview or {}).nudge_indent_plugins) then
+    return
+  end
+  if not (win and vim.api.nvim_win_is_valid(win)) then
+    return
+  end
+  local buf = vim.api.nvim_win_get_buf(win)
+  vim.schedule(function()
+    if not vim.api.nvim_win_is_valid(win) then
+      return
+    end
+    pcall(vim.api.nvim_win_call, win, function()
+      pcall(vim.api.nvim_exec_autocmds, "BufWinEnter", {
+        buffer = buf,
+        modeline = false,
+      })
+    end)
+  end)
+end
+
 -- Called from sidebar preview/navigation: decorate the hunk's file and center
 -- the source window cursor on the hunk.
 function M.show(hunk, opts)
@@ -363,6 +500,7 @@ function M.show(hunk, opts)
       local lc = vim.api.nvim_buf_line_count(buf)
       pcall(vim.api.nvim_win_set_cursor, win, { math.min(target_line, lc), 0 })
       pcall(vim.api.nvim_win_call, win, function() vim.cmd("normal! zz") end)
+      nudge_indent_plugins(win)
       break
     end
   end
