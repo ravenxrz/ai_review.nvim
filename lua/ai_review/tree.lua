@@ -88,6 +88,7 @@ function M.build(files)
       local key = "submodule::" .. group
       parent = child(root, "submodule", group, key)
       parent.submodule = group
+      parent.group_kind = file.group_kind
       add_counts(parent, file)
     end
 
@@ -179,7 +180,8 @@ local function flatten_node(node, expanded, filter, out, line_map, depth)
   if node.kind == "submodule" then
     local is_expanded = expanded[node.key] ~= false
     local arrow = is_expanded and config.options.icons.expanded or config.options.icons.collapsed
-    add_line(out, line_map, string.format("%s%s [submodule] %s", indent, arrow, node.name), { kind = "group", key = node.key, group = node.name })
+    local tag = (node.group_kind == "project") and "project" or "submodule"
+    add_line(out, line_map, string.format("%s%s [%s] %s", indent, arrow, tag, node.name), { kind = "group", key = node.key, group = node.name })
     if not is_expanded then return end
   elseif node.kind == "dir" then
     local is_expanded = expanded[node.key] ~= false

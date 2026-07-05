@@ -62,6 +62,7 @@ local function collect_untracked(node, out, include_untracked)
       display_prefix = "",
       submodule = node.submodule,
       group = node.submodule,
+      group_kind = node.group_kind,
     }))
   end
 end
@@ -77,6 +78,7 @@ local function parse_repo_result(node, diff_lines, submodules, include_untracked
     display_prefix = "",
     submodule = node.submodule,
     group = node.submodule,
+    group_kind = node.group_kind,
   })
   local out = {}
   for _, file in ipairs(parsed) do
@@ -179,11 +181,18 @@ run_next = function(scan_id)
   end
 end
 
-function M.scan(root)
+function M.scan(roots)
   queue = {}
   active = 0
-  local scan_id = state.begin_scan(root)
-  enqueue(scan_id, { root = root, depth = 0, submodule = nil }, {})
+  local scan_id = state.begin_scan(roots)
+  for _, entry in ipairs(state.roots) do
+    enqueue(scan_id, {
+      root = entry.root,
+      depth = 0,
+      submodule = entry.label,   -- project 名作为分组标签；nil 时无分组
+      group_kind = entry.label and "project" or nil,
+    }, {})
+  end
   require("ai_review.ui").render()
   run_next(scan_id)
   maybe_done(scan_id)

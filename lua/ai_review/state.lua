@@ -1,5 +1,6 @@
 local M = {
   root = nil,
+  roots = {},
   files = {},
   expanded = {},
   rejected_log = {},
@@ -28,8 +29,16 @@ function M.toggle_submodules_enabled()
   return M.submodules_enabled
 end
 
-function M.begin_scan(root)
-  M.root = root
+function M.begin_scan(roots)
+  -- roots: string (单 root，向后兼容) 或 { {root,label}, ... }
+  local list = {}
+  if type(roots) == "string" then
+    list = { { root = roots, label = nil } }
+  else
+    list = roots or {}
+  end
+  M.roots = list
+  M.root = list[1] and list[1].root or nil
   M.files = {}
   M.expanded = {}
   M.rejected_log = {}
@@ -70,6 +79,7 @@ function M.merge_files(new_files)
         display_path = file.display_path or file.path,
         repo_root = file.repo_root,
         submodule = file.submodule,
+        group_kind = file.group_kind,
         status = file.status or "modified",
         added = 0,
         deleted = 0,
