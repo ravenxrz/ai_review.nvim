@@ -4,6 +4,7 @@ local parser = require("ai_review.parser")
 local state = require("ai_review.state")
 local ui = require("ai_review.ui")
 local highlights = require("ai_review.highlights")
+local workspace = require("ai_review.workspace")
 
 local M = {}
 
@@ -11,23 +12,41 @@ local function notify(msg, level)
   vim.notify(msg, level or vim.log.levels.INFO, { title = "AI Review" })
 end
 
-function M.refresh()
+-- 解析扫描目标：workspace 激活时用所有 project roots，否则回退到当前 buffer 的 git root。
+-- @return roots {root,label}[]|nil, errors string[]|nil, fatal_err string|nil
+local function resolve_scan_roots()
+  if workspace.is_active() then
+    local roots, errs = workspace.roots()
+    if #roots > 0 then
+      return roots, errs, nil
+    end
+  end
   local root, err = git.find_root(vim.api.nvim_buf_get_name(0))
   if not root then
-    notify("Not inside a Git repository: " .. (err or ""), vim.log.levels.WARN)
+    return nil, nil, err
+  end
+  return { { root = root, label = nil } }, nil, nil
+end
+
+function M.refresh()
+  local roots, errs, fatal = resolve_scan_roots()
+  if not roots then
+    notify("Not inside a Git repository: " .. (fatal or ""), vim.log.levels.WARN)
     return
   end
   require("ai_review.inline_diff").close_all()
-  require("ai_review.scanner").scan(root)
+  require("ai_review.scanner").scan(roots)
+  if errs and #errs > 0 then
+    notify("Some workspace folders were skipped:\n" .. table.concat(errs, "\n"), vim.log.levels.WARN)
+  end
 end
 
 function M.open()
-  local root, err = git.find_root(vim.api.nvim_buf_get_name(0))
-  if not root then
-    notify("Not inside a Git repository: " .. (err or ""), vim.log.levels.WARN)
+  local roots, _, fatal = resolve_scan_roots()
+  if not roots then
+    notify("Not inside a Git repository: " .. (fatal or ""), vim.log.levels.WARN)
     return
   end
-  state.reset_for_root(root)
   ui.ensure_sidebar()
   M.refresh()
   ui.focus()
