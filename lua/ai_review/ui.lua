@@ -139,17 +139,25 @@ function M.ensure_sidebar()
   end
 
   state.source_win = M.find_source_win() or vim.api.nvim_get_current_win()
+
+  -- 复用上一次的 sidebar buffer（关闭窗口时 bufhidden=hide 会保留它），
+  -- 只有在没有可用 buffer 时才新建，避免每次 toggle 都产生一个孤儿 buffer。
+  local buf = state.sidebar_buf
+  if not is_valid_buf(buf) then
+    buf = vim.api.nvim_create_buf(false, true)
+    state.sidebar_buf = buf
+  end
+
   local side = config.options.sidebar.side
   local width = config.options.sidebar.width
   if side == "right" then
-    vim.cmd("botright vertical " .. width .. "new")
+    vim.cmd("botright vertical " .. width .. "split")
   else
-    vim.cmd("topleft vertical " .. width .. "new")
+    vim.cmd("topleft vertical " .. width .. "split")
   end
   local win = vim.api.nvim_get_current_win()
-  local buf = vim.api.nvim_get_current_buf()
+  vim.api.nvim_win_set_buf(win, buf)
   state.sidebar_win = win
-  state.sidebar_buf = buf
 
   vim.bo[buf].buftype = "nofile"
   vim.bo[buf].bufhidden = "hide"
