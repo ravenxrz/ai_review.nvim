@@ -146,6 +146,13 @@ function M.status(root)
   return M.run(root, { "status", "--porcelain=v1" })
 end
 
+-- Content of a file as currently staged in the index (`git show :path`).
+-- Returns code, lines. Non-zero code means the file has no index entry
+-- (e.g. untracked / newly added), in which case callers treat the base as empty.
+function M.index_file(root, file)
+  return M.run(root, { "show", ":" .. file })
+end
+
 function M.add_file(root, file)
   return M.run(root, { "add", "--", file })
 end

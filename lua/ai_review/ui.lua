@@ -84,6 +84,33 @@ local function install_resize_autocmd()
   })
 end
 
+-- Tear down inline decorations and reset sidebar state. Safe to call multiple
+-- times; used both by the explicit close command and the WinClosed watcher.
+local function teardown()
+  pcall(function()
+    local inline = require("ai_review.inline_diff")
+    inline.disable_auto_preview()
+    inline.close_all()
+  end)
+  state.sidebar_win = nil
+end
+
+-- The sidebar window can be closed by many paths (`:q`, <C-w>c, :only, other
+-- plugins), not just our own `q` mapping. Without watching WinClosed, inline
+-- decorations would linger in source buffers after the sidebar disappears.
+local function install_close_autocmd()
+  local group = vim.api.nvim_create_augroup("AiReviewSidebarClose", { clear = true })
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = group,
+    callback = function(args)
+      local closed = tonumber(args.match)
+      if closed and closed == state.sidebar_win then
+        vim.schedule(teardown)
+      end
+    end,
+  })
+end
+
 local ignored_source_filetypes = {
   NvimTree = true,
   ["neo-tree"] = true,
@@ -180,6 +207,7 @@ function M.ensure_sidebar()
   if config.options.sidebar.auto_restore_width then
     install_resize_autocmd()
   end
+  install_close_autocmd()
 
   require("ai_review.inline_diff").enable_auto_preview()
 
@@ -219,13 +247,12 @@ function M.set_keymaps(buf)
 end
 
 function M.close()
-  pcall(function()
-    local inline = require("ai_review.inline_diff")
-    inline.disable_auto_preview()
-    inline.close_all()
-  end)
-  if is_valid_win(state.sidebar_win) then
-    vim.api.nvim_win_close(state.sidebar_win, true)
+  local win = state.sidebar_win
+  -- Clear decorations first so the WinClosed handler has nothing left to do,
+  -- then close the window. teardown() is idempotent if WinClosed also fires.
+  teardown()
+  if is_valid_win(win) then
+    vim.api.nvim_win_close(win, true)
   end
   state.sidebar_win = nil
 end

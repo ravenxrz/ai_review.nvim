@@ -116,6 +116,7 @@ end
 
 -- Re-diff a buffer's file against the index using fresh disk content.
 -- Returns { file = relpath, root = repo_root, hunks = {...} }.
+-- Used by accept/reject, which save the buffer first so disk == buffer.
 local function rediff_buffer(buf)
   local file = vim.api.nvim_buf_get_name(buf)
   if file == "" then
@@ -137,6 +138,55 @@ local function rediff_buffer(buf)
       hunks = f.pending or {}
       break
     end
+  end
+  return { file = rel, root = root, hunks = hunks }
+end
+
+-- Diff the git index against the CURRENT (possibly unsaved) buffer contents,
+-- so inline decorations always line up with the lines the user actually sees.
+-- Using `git diff` (disk-vs-index) instead would desync line numbers the moment
+-- the buffer is edited without saving, garbling the overlay.
+local function live_hunks(buf)
+  local name = vim.api.nvim_buf_get_name(buf)
+  if name == "" then
+    return nil, "buffer has no file"
+  end
+  local root, err = git.find_root(name)
+  if not root then
+    return nil, err or "not a git repo"
+  end
+  local rel = vim.fn.fnamemodify(name, ":p"):sub(#root + 2)
+
+  -- Base = file as staged in the index. Missing index entry (untracked/new)
+  -- means an empty base, so the whole buffer shows up as additions.
+  local code, index_lines = git.index_file(root, rel)
+  local base_text = (code == 0) and table.concat(index_lines, "\n") or ""
+  local cur_text = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+
+  local hunks = {}
+  local ok, diff = pcall(vim.diff, base_text, cur_text, { result_type = "indices" })
+  if not ok or type(diff) ~= "table" then
+    return { file = rel, root = root, hunks = hunks }
+  end
+  for _, h in ipairs(diff) do
+    local sa, ca, sb, cb = h[1], h[2], h[3], h[4]
+    local patch = { string.format("@@ -%d,%d +%d,%d @@", sa, ca, sb, cb) }
+    for i = sa, sa + ca - 1 do
+      table.insert(patch, "-" .. (index_lines[i] or ""))
+    end
+    for i = sb, sb + cb - 1 do
+      table.insert(patch, "+" .. (vim.api.nvim_buf_get_lines(buf, i - 1, i, false)[1] or ""))
+    end
+    table.insert(hunks, {
+      file = rel,
+      repo_root = root,
+      status = "pending",
+      old_start = sa,
+      old_count = ca,
+      new_start = sb,
+      new_count = cb,
+      patch = patch,
+    })
   end
   return { file = rel, root = root, hunks = hunks }
 end
@@ -388,6 +438,12 @@ function M.enable_auto_preview()
     callback = function(args)
       local buf = args.buf
       vim.schedule(function()
+        -- The sidebar may have been closed between queuing and running this
+        -- scheduled callback; if auto-preview was torn down, do nothing so we
+        -- don't re-decorate a buffer right after close_all() cleared it.
+        if not M.auto_preview_group then
+          return
+        end
         if not is_valid_buf(buf) or M.decorated[buf] then
           return
         end
@@ -428,7 +484,7 @@ function M.render_buffer(buf)
   highlights.setup()
   local ns = ensure_ns()
   pcall(vim.api.nvim_buf_clear_namespace, buf, ns, 0, -1)
-  local info = rediff_buffer(buf)
+  local info = live_hunks(buf)
   if not info or #info.hunks == 0 then
     M.decorated[buf] = nil
     return
